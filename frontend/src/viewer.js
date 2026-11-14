@@ -1,4 +1,4 @@
-import { getFrames, API_BASE, getSelectedTarget, setSelectedTarget, findMatchingCachedTarget } from './api.js';
+import { getFrames, API_BASE, getApiBase, getSelectedTarget, setSelectedTarget, findMatchingCachedTarget } from './api.js';
 import { generateSimFrames } from './simFrames.js';
 import { TARGETS, getDefaultPairForTarget, getCaptionForTarget, getTargetInfo, isCachedDemoTarget } from './targets.js';
 
@@ -652,9 +652,35 @@ export function initViewer(sky) {
     }
   });
 
+  // Update timeline slider, labels, and ticks dynamically based on state.frames.length
+  function updateTimelineUI() {
+    const totalFrames = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
+    const activeNum = state.currentFrameIndex + 1;
+
+    if (frameSlider) {
+      frameSlider.min = '1';
+      frameSlider.max = String(totalFrames);
+      frameSlider.value = String(activeNum);
+    }
+
+    if (sliderFrameLabel) {
+      sliderFrameLabel.textContent = `FRAME ${activeNum} OF ${totalFrames}`;
+    }
+
+    const ticksContainer = document.querySelector('.viewer-slider-ticks');
+    if (ticksContainer) {
+      ticksContainer.innerHTML = '';
+      for (let i = 1; i <= totalFrames; i++) {
+        const span = document.createElement('span');
+        span.textContent = String(i);
+        ticksContainer.appendChild(span);
+      }
+    }
+  }
+
   // Populate Dropdowns for frames (1-based on screen)
   function populateFrameSelects() {
-    const total = state.frames && state.frames.length ? state.frames.length : 9;
+    const total = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
     [selectBlinkA, selectBlinkB, selectDiffA, selectDiffB].forEach(sel => {
       if (!sel) return;
       sel.innerHTML = '';
@@ -687,22 +713,22 @@ export function initViewer(sky) {
       b.classList.toggle('active', b.dataset.pairMode === mode);
     });
 
-    const framesLen = state.frames && state.frames.length ? state.frames.length : 9;
+    const framesLen = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
     let pair = [0, Math.max(0, framesLen - 1)];
 
-    if (mode === 'best') {
+    if (!state.live && mode === 'best') {
       pair = getDefaultPairForTarget(state.name, framesLen);
     } else {
       pair = [0, Math.max(0, framesLen - 1)];
     }
 
-    state.blinkFrameA = pair[0];
-    state.blinkFrameB = pair[1];
+    state.blinkFrameA = Math.max(0, Math.min(pair[0], framesLen - 1));
+    state.blinkFrameB = Math.max(0, Math.min(pair[1], framesLen - 1));
 
-    if (selectBlinkA) selectBlinkA.value = String(pair[0]);
-    if (selectBlinkB) selectBlinkB.value = String(pair[1]);
-    if (selectDiffA)  selectDiffA.value  = String(pair[0]);
-    if (selectDiffB)  selectDiffB.value  = String(pair[1]);
+    if (selectBlinkA) selectBlinkA.value = String(state.blinkFrameA);
+    if (selectBlinkB) selectBlinkB.value = String(state.blinkFrameB);
+    if (selectDiffA)  selectDiffA.value  = String(state.blinkFrameA);
+    if (selectDiffB)  selectDiffB.value  = String(state.blinkFrameB);
 
     updateBlinkInfoLabel();
     renderCurrentFrame();
@@ -851,6 +877,102 @@ export function initViewer(sky) {
     stageScaleBarLine.style.width = `${Math.round(pxLength)}px`;
   }
 
+  // ─── Process Loaded Frames from API, Cache, or Simulation ─────────────────
+  async function processLoadedFrames(response, cacheKey) {
+    const isLiveResponse = Boolean(response && (response.live === true || response.live === 'true' || response.data?.live === true));
+
+    if (isLiveResponse) {
+      state.live = true;
+      state.source = 'api';
+      state.mock = false;
+      state.isLiveRequest = false;
+      if (understageCaption) {
+        understageCaption.textContent = "Live fetch: frames are not aligned, so Blink may jitter. For the clearest view use the 5 featured targets.";
+      }
+    } else {
+      state.live = false;
+      state.source = response.source || (response.mock ? 'simulated' : 'api');
+      state.mock = Boolean(response.mock === true || state.source !== 'api');
+      state.isLiveRequest = false;
+      if (understageCaption) {
+        understageCaption.textContent = getCaptionForTarget(state.name);
+      }
+    }
+
+    const rawFrames = Array.isArray(response) ? response : (response.frames || []);
+
+    // Ensure each frame has valid resolved image_url
+    const base = getApiBase();
+    rawFrames.forEach((frame) => {
+      let imgUrl = frame.image_url || frame.url || frame.image || frame.url_path || '';
+      if (imgUrl && typeof imgUrl === 'string' && !imgUrl.startsWith('http://') && !imgUrl.startsWith('https://') && !imgUrl.startsWith('data:') && !imgUrl.startsWith('blob:')) {
+        const cleanBase = base ? base.replace(/\/+$/, '') : '';
+        const cleanPath = imgUrl.startsWith('/') ? imgUrl : `/${imgUrl}`;
+        imgUrl = cleanBase ? `${cleanBase}${cleanPath}` : cleanPath;
+      }
+      frame.image_url = imgUrl;
+    });
+
+    // Ensure all images are preloaded into HTMLImageElements and wait for them to load before drawing
+    const preloadedImages = await Promise.all(rawFrames.map((frame, idx) => {
+      return new Promise((resolve) => {
+        if (!frame.image_url) {
+          resolve(null);
+          return;
+        }
+        const img = new Image();
+        if (!frame.image_url.startsWith('data:') && !frame.image_url.startsWith('blob:')) {
+          img.crossOrigin = 'anonymous';
+        }
+        img.onload = () => resolve(img);
+        img.onerror = (err) => {
+          console.warn(`[viewer] Failed to load frame ${idx + 1} image from: ${frame.image_url}`, err);
+          resolve(null);
+        };
+        img.src = frame.image_url;
+      });
+    }));
+
+    rawFrames.forEach((f, idx) => {
+      f.loadedImage = preloadedImages[idx];
+      if (f.loadedImage && f.loadedImage.naturalWidth > 0 && !f.imageData) {
+        try {
+          const offCanvas = document.createElement('canvas');
+          offCanvas.width = 600;
+          offCanvas.height = 600;
+          const offCtx = offCanvas.getContext('2d');
+          offCtx.drawImage(f.loadedImage, 0, 0, 600, 600);
+          f.imageData = offCtx.getImageData(0, 0, 600, 600);
+        } catch (_) {}
+      }
+    });
+
+    state.frames = rawFrames;
+    previousLoadedFov = state.fov;
+
+    const totalFrames = state.frames.length;
+    state.currentFrameIndex = Math.max(0, Math.min(state.currentFrameIndex, totalFrames - 1));
+
+    if (cacheKey) {
+      frameCache.set(cacheKey, {
+        frames: state.frames,
+        source: state.source,
+        mock: state.mock,
+        live: state.live,
+      });
+    }
+
+    stopElapsedCounter();
+    loadingOverlay.style.display = 'none';
+    errorOverlay.style.display = 'none';
+
+    updateTimelineUI();
+    populateFrameSelects();
+    applyPairMode(state.live ? 'firstlast' : 'best');
+    setZoom(1);
+    renderCurrentFrame();
+  }
+
   // ─── Preload & Render Images onto Display Canvas ────────────────────────────
   async function loadFramesForTarget(ra, dec, fov, name, isNewEntry = false, options = {}) {
     let fovNum = typeof fov === 'number' ? fov : parseFloat(fov);
@@ -884,15 +1006,49 @@ export function initViewer(sky) {
       }
     }
 
-    const isLive = Boolean(options.liveFetch);
-    state.isLiveRequest = isLive;
+    const isLiveReq = Boolean(options.liveFetch || (options.preloadedResult && (options.preloadedResult.live === true || options.preloadedResult.live === 'true')));
+    state.isLiveRequest = Boolean(options.liveFetch);
+
+    if (options.forceSimulated) {
+      state.live = false;
+      state.source = 'simulated';
+      state.mock = true;
+    } else if (isLiveReq) {
+      state.live = true;
+      state.source = 'api';
+      state.mock = false;
+    } else if (options.preloadedResult) {
+      state.live = false;
+      state.source = 'api';
+      state.mock = false;
+    }
+
+    if (stageSourceBadge && stageSourceText) {
+      if (state.live) {
+        stageSourceBadge.className = 'stage-source-badge live';
+        stageSourceText.innerHTML = 'SPHEREX DATA (LIVE) <span class="tag-not-aligned">NOT ALIGNED</span>';
+      } else if (state.source === 'api' && state.mock !== true) {
+        stageSourceBadge.className = 'stage-source-badge api';
+        stageSourceText.textContent = 'SPHEREX DATA';
+      } else {
+        stageSourceBadge.className = 'stage-source-badge simulated';
+        stageSourceText.textContent = 'SIMULATED FRAMES';
+      }
+    }
 
     if (understageCaption) {
-      if (isLive || state.live) {
+      if (state.live) {
         understageCaption.textContent = "Live fetch: frames are not aligned, so Blink may jitter. For the clearest view use the 5 featured targets.";
       } else {
         understageCaption.textContent = getCaptionForTarget(state.name);
       }
+    }
+
+    if (btnToggleExpected) {
+      btnToggleExpected.style.display = state.live ? 'none' : '';
+    }
+    if (state.live && expectedPositionMarker) {
+      expectedPositionMarker.style.display = 'none';
     }
 
     if (isNewEntry || typeof state.entryFov !== 'number') {
@@ -915,68 +1071,26 @@ export function initViewer(sky) {
       stopElapsedCounter();
       loadingOverlay.style.display = 'none';
       errorOverlay.style.display = 'none';
-      state.live = false;
-      state.isLiveRequest = false;
       const sim = await generateSimFrames(effectiveRa, effectiveDec, fovNum, state.name);
-      state.frames = sim.frames;
-      state.source = 'simulated';
-      state.mock = true;
-      previousLoadedFov = state.fov;
-      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock, live: false });
-      populateFrameSelects();
-      applyPairMode('best');
-      setZoom(1);
-      renderCurrentFrame();
+      await processLoadedFrames(sim, cacheKey);
       return;
     }
 
-    // Preloaded result supplied directly from HUD load button
+    // Preloaded result supplied directly from HUD load button or external caller
     if (options.preloadedResult) {
       stopElapsedCounter();
       loadingOverlay.style.display = 'none';
       errorOverlay.style.display = 'none';
-      const preloadedResult = options.preloadedResult;
-      const preloadedImages = await Promise.all(preloadedResult.frames.map(frame => {
-        return new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = () => resolve(img);
-          img.src = frame.image_url;
-        });
-      }));
-      preloadedResult.frames.forEach((f, idx) => {
-        f.loadedImage = preloadedImages[idx];
-      });
-      state.frames = preloadedResult.frames;
-      state.source = preloadedResult.source;
-      state.mock = Boolean(preloadedResult.mock === true || preloadedResult.source !== 'api');
-      state.live = Boolean(preloadedResult.live === true);
-      state.isLiveRequest = false;
-      previousLoadedFov = state.fov;
-      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock, live: state.live });
-      populateFrameSelects();
-      applyPairMode('best');
-      setZoom(1);
-      renderCurrentFrame();
+      await processLoadedFrames(options.preloadedResult, cacheKey);
       return;
     }
 
     if (frameCache.has(cacheKey)) {
       const cached = frameCache.get(cacheKey);
-      state.frames = cached.frames;
-      state.source = cached.source;
-      state.mock = cached.mock ?? (cached.source !== 'api');
-      state.live = Boolean(cached.live === true);
-      state.isLiveRequest = false;
-      previousLoadedFov = state.fov;
-      stopElapsedCounter();
-      loadingOverlay.style.display = 'none';
-      errorOverlay.style.display = 'none';
-      populateFrameSelects();
-      applyPairMode('best');
-      setZoom(1);
-      renderCurrentFrame();
-      return;
+      if (!isLive || cached.live === true) {
+        await processLoadedFrames(cached, null);
+        return;
+      }
     }
 
     if (activeAbortController) {
@@ -1086,41 +1200,8 @@ export function initViewer(sky) {
       if (timeoutId) clearTimeout(timeoutId);
       if (signal.aborted) return;
 
-      // Ensure all images are preloaded into HTMLImageElements
-      const preloadedImages = await Promise.all(result.frames.map(frame => {
-        return new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = () => resolve(img);
-          img.src = frame.image_url;
-        });
-      }));
-
-      if (signal.aborted) return;
-
-      result.frames.forEach((f, idx) => {
-        f.loadedImage = preloadedImages[idx];
-      });
-
       state.preloadTimeMs = performance.now() - startTime;
-      state.frames = result.frames;
-      state.source = result.source;
-      state.mock = Boolean(result.mock === true || result.source !== 'api');
-      state.live = Boolean(result.live === true);
-      previousLoadedFov = state.fov;
-
-      if (understageCaption && state.live) {
-        understageCaption.textContent = "Live fetch: frames are not aligned, so Blink may jitter. For the clearest view use the 5 featured targets.";
-      }
-
-      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock, live: state.live });
-
-      stopElapsedCounter();
-      loadingOverlay.style.display = 'none';
-      populateFrameSelects();
-      applyPairMode('best');
-      setZoom(1);
-      renderCurrentFrame();
+      await processLoadedFrames(result, cacheKey);
     } catch (err) {
       if (timeoutId) clearTimeout(timeoutId);
       stopElapsedCounter();
@@ -1243,21 +1324,36 @@ export function initViewer(sky) {
     if (!curFrame) return;
 
     ctx.clearRect(0, 0, 600, 600);
-    if (curFrame.loadedImage) {
-      ctx.drawImage(curFrame.loadedImage, 0, 0);
+    if (curFrame.loadedImage && curFrame.loadedImage.complete && curFrame.loadedImage.naturalWidth > 0) {
+      ctx.drawImage(curFrame.loadedImage, 0, 0, 600, 600);
     } else if (curFrame.imageData) {
       ctx.putImageData(curFrame.imageData, 0, 0);
+    } else if (curFrame.image_url) {
+      const img = new Image();
+      if (!curFrame.image_url.startsWith('data:') && !curFrame.image_url.startsWith('blob:')) {
+        img.crossOrigin = 'anonymous';
+      }
+      img.onload = () => {
+        curFrame.loadedImage = img;
+        if (state.currentFrameIndex === activeIdx && state.mode !== 'DIFFERENCE') {
+          ctx.clearRect(0, 0, 600, 600);
+          ctx.drawImage(img, 0, 0, 600, 600);
+        }
+      };
+      img.src = curFrame.image_url;
     }
 
+    const totalFrames = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
+
     // Stage Overlay updates
-    stageFrameCounter.textContent = `FRAME ${activeIdx + 1}/9 ${labelPrefix}`;
-    stageFrameDate.textContent = curFrame.date;
+    stageFrameCounter.textContent = `FRAME ${activeIdx + 1}/${totalFrames} ${labelPrefix}`;
+    stageFrameDate.textContent = curFrame.date || '';
     stageDetectorLabel.textContent = curFrame.detector || 'DETECTOR 1';
 
     // Slider sync
     if (frameSlider && state.mode === 'PLAY') {
       frameSlider.value = String(activeIdx + 1);
-      sliderFrameLabel.textContent = `FRAME ${activeIdx + 1} OF 9`;
+      sliderFrameLabel.textContent = `FRAME ${activeIdx + 1} OF ${totalFrames}`;
     }
 
     renderExpectedPosition();
@@ -1329,8 +1425,9 @@ export function initViewer(sky) {
       if (!state.isPlaying) return;
 
       if (state.mode === 'PLAY') {
+        const total = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
         const nextIdx = state.currentFrameIndex + 1;
-        if (nextIdx >= 9) {
+        if (nextIdx >= total) {
           if (state.isLooping) {
             state.currentFrameIndex = 0;
           } else {
@@ -1411,12 +1508,14 @@ export function initViewer(sky) {
   btnBlinkToggle.addEventListener('click', togglePlayPause);
 
   btnPlayPrev.addEventListener('click', () => {
-    state.currentFrameIndex = (state.currentFrameIndex - 1 + 9) % 9;
+    const total = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
+    state.currentFrameIndex = (state.currentFrameIndex - 1 + total) % total;
     renderCurrentFrame();
   });
 
   btnPlayNext.addEventListener('click', () => {
-    state.currentFrameIndex = (state.currentFrameIndex + 1) % 9;
+    const total = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
+    state.currentFrameIndex = (state.currentFrameIndex + 1) % total;
     renderCurrentFrame();
   });
 
@@ -1547,11 +1646,13 @@ export function initViewer(sky) {
       togglePlayPause();
     } else if (e.code === 'ArrowLeft') {
       e.preventDefault();
-      state.currentFrameIndex = (state.currentFrameIndex - 1 + 9) % 9;
+      const total = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
+      state.currentFrameIndex = (state.currentFrameIndex - 1 + total) % total;
       renderCurrentFrame();
     } else if (e.code === 'ArrowRight') {
       e.preventDefault();
-      state.currentFrameIndex = (state.currentFrameIndex + 1) % 9;
+      const total = (state.frames && state.frames.length) ? state.frames.length : (state.live ? 6 : 9);
+      state.currentFrameIndex = (state.currentFrameIndex + 1) % total;
       renderCurrentFrame();
     } else if (e.key === 'b' || e.key === 'B') {
       e.preventDefault();
@@ -1567,7 +1668,7 @@ export function initViewer(sky) {
 
   // ─── Entry Point from argus:probe Event ──────────────────────────────────────
   window.addEventListener('argus:probe', (e) => {
-    const { ra, dec, fov, name, preloadedResult, forceSimulated, liveFetch } = e.detail || {};
+    const { ra, dec, fov, name, preloadedResult, forceSimulated, liveFetch, response } = e.detail || {};
     const selected = getSelectedTarget();
     const defaultTarget = Object.values(TARGETS)[0];
     const targetRa = (typeof ra === 'number') ? ra : (selected?.ra ?? defaultTarget.ra);
@@ -1581,10 +1682,12 @@ export function initViewer(sky) {
     }
 
     state.entryFov = targetFov;
+    const finalPreloaded = preloadedResult || response;
+    const isLiveReq = Boolean(liveFetch || (finalPreloaded && (finalPreloaded.live === true || finalPreloaded.live === 'true')));
     loadFramesForTarget(targetRa, targetDec, targetFov, targetName, true, {
-      preloadedResult,
+      preloadedResult: finalPreloaded,
       forceSimulated,
-      liveFetch,
+      liveFetch: isLiveReq,
     });
   });
 
@@ -1665,25 +1768,32 @@ export function initViewer(sky) {
     cancelFetch: () => { btnCancel?.click(); },
     getElapsedText: () => elapsedTimeEl?.textContent || '',
     getMoverPositions: () => {
-      if (!state.frames || state.frames.length < 9) return null;
+      if (!state.frames || state.frames.length < 2) return null;
+      const lastIdx = state.frames.length - 1;
       return {
         frame1: state.frames[0].moverPos,
-        frame9: state.frames[8].moverPos,
+        frame9: state.frames[lastIdx].moverPos,
       };
     },
     getStaticStarPosition: () => {
-      if (!state.frames || state.frames.length < 9) return null;
+      if (!state.frames || state.frames.length < 2) return null;
+      const lastIdx = state.frames.length - 1;
       return {
         frame1: state.frames[0].staticStarSample,
-        frame9: state.frames[8].staticStarSample,
+        frame9: state.frames[lastIdx].staticStarSample,
       };
     },
     getDifferenceMetrics: () => {
       if (!state.diffResult) {
         // Run difference if not currently in diff mode
-        if (state.frames && state.frames.length >= 9) {
-          const res = computeDifference(state.frames[0].imageData, state.frames[8].imageData, state.diffGain);
-          return res.metrics;
+        if (state.frames && state.frames.length >= 2) {
+          const lastIdx = state.frames.length - 1;
+          const imgA = state.frames[0].imageData;
+          const imgB = state.frames[lastIdx].imageData;
+          if (imgA && imgB) {
+            const res = computeDifference(imgA, imgB, state.diffGain);
+            return res.metrics;
+          }
         }
         return null;
       }
@@ -1695,7 +1805,7 @@ export function initViewer(sky) {
     },
     getAverageFrameTime: () => Math.round(state.avgFrameTimeMs),
     setMode: (m) => setMode(m),
-    loadFrames: (r, d, f, n) => loadFramesForTarget(r, d, f, n, true),
+    loadFrames: (r, d, f, n, options = {}) => loadFramesForTarget(r, d, f, n, true, options),
     getState: () => state,
     getBlinkPair: () => [state.blinkFrameA, state.blinkFrameB],
     getBlinkInfoText: () => blinkPairInfoLabel?.textContent || '',

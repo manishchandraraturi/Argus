@@ -309,16 +309,28 @@ export async function getFrames(ra, dec, fov = 0.20, optionsOrName = {}, onProgr
       const frameList = Array.isArray(data) ? data : (data.frames || []);
       const formattedFrames = frameList.map((f, idx) => {
         if (typeof f === 'string') {
+          let strUrl = f;
+          if (strUrl && !strUrl.startsWith('http://') && !strUrl.startsWith('https://') && !strUrl.startsWith('data:') && !strUrl.startsWith('blob:')) {
+            const base = apiBase ? apiBase.replace(/\/+$/, '') : '';
+            const cleanPath = strUrl.startsWith('/') ? strUrl : `/${strUrl}`;
+            strUrl = base ? `${base}${cleanPath}` : cleanPath;
+          }
           return {
             date: new Date(Date.UTC(2025, idx, 15)).toISOString().split('T')[0],
-            image_url: f,
+            image_url: strUrl,
             detector: `DETECTOR ${((idx % 3) + 1)}`,
             wavelength_um: 2.4,
           };
         }
+        let imgUrl = f.image_url || f.url || f.image || f.url_path || '';
+        if (imgUrl && typeof imgUrl === 'string' && !imgUrl.startsWith('http://') && !imgUrl.startsWith('https://') && !imgUrl.startsWith('data:') && !imgUrl.startsWith('blob:')) {
+          const base = apiBase ? apiBase.replace(/\/+$/, '') : '';
+          const cleanPath = imgUrl.startsWith('/') ? imgUrl : `/${imgUrl}`;
+          imgUrl = base ? `${base}${cleanPath}` : cleanPath;
+        }
         return {
           date: f.date || new Date(Date.UTC(2025, idx, 15)).toISOString().split('T')[0],
-          image_url: f.image_url || f.url || f.image || '',
+          image_url: imgUrl,
           detector: f.detector || `DETECTOR ${((idx % 3) + 1)}`,
           wavelength_um: f.wavelength_um || 2.4,
           flags: f.flags || 0,
@@ -326,11 +338,12 @@ export async function getFrames(ra, dec, fov = 0.20, optionsOrName = {}, onProgr
         };
       });
 
+      const isLive = Boolean(data && (data.live === true || data.live === 'true'));
       return {
         frames: formattedFrames,
         source: 'api',
-        mock: Boolean(data && data.mock === true),
-        live: Boolean(data && data.live === true),
+        mock: isLive ? false : Boolean(data && data.mock === true),
+        live: isLive,
         aligned: Boolean(data && data.aligned === true),
       };
     } catch (err) {
