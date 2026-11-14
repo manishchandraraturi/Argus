@@ -257,6 +257,9 @@ export function initViewer(sky) {
               <!-- Canvas for Frame Display -->
               <canvas class="viewer-canvas" id="viewer-display-canvas" width="600" height="600"></canvas>
 
+              <!-- Faint Astrometry Crosshair Grid Overlay -->
+              <div class="stage-astrometry-grid" id="stage-astrometry-grid"></div>
+
               <!-- Thin Center Crosshair -->
               <div class="viewer-crosshair-center"></div>
 
