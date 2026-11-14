@@ -1,4 +1,4 @@
-import { getFrames, API_BASE, getSelectedTarget, setSelectedTarget } from './api.js';
+import { getFrames, API_BASE, getSelectedTarget, setSelectedTarget, findMatchingCachedTarget } from './api.js';
 import { generateSimFrames } from './simFrames.js';
 import { TARGETS, getDefaultPairForTarget, getCaptionForTarget, getTargetInfo, isCachedDemoTarget } from './targets.js';
 
@@ -208,6 +208,8 @@ export function initViewer(sky) {
     frames: [],
     source: 'simulated',
     mock: true,
+    live: false,
+    isLiveRequest: false,
     mode: 'PLAY', // 'PLAY' | 'BLINK' | 'DIFFERENCE'
     currentFrameIndex: 0, // 0-based index
     blinkFrameA: 0,
@@ -307,6 +309,7 @@ export function initViewer(sky) {
           <div class="viewer-loading-overlay" id="viewer-loading-overlay" style="display: none;">
             <div class="viewer-spinner"></div>
             <div class="viewer-scan-line-text" id="viewer-scan-text">SCANNING 9 FRAMES... 0/9</div>
+            <div class="viewer-live-frames-count" id="viewer-live-frames-count" style="display: none;">0/6 FRAMES</div>
             <div class="viewer-progress-bar" id="viewer-progress-bar">
               <div class="viewer-progress-fill" id="viewer-progress-fill"></div>
             </div>
@@ -322,7 +325,7 @@ export function initViewer(sky) {
 
           <!-- Error Overlay with Retry / Simulated Fallback -->
           <div class="viewer-error-overlay" id="viewer-error-overlay" style="display: none;">
-            <div class="viewer-error-title">FRAME ACQUISITION FAILED</div>
+            <div class="viewer-error-title" id="viewer-error-title">FRAME ACQUISITION FAILED</div>
             <div class="viewer-error-desc" id="viewer-error-desc">Unable to retrieve SPHEREX survey frames from server.</div>
             <div class="viewer-error-actions">
               <button type="button" class="hud-btn-44" id="viewer-btn-retry">RETRY</button>
@@ -515,6 +518,7 @@ export function initViewer(sky) {
   const stageCandidatesLayer = document.getElementById('stage-candidates-layer');
   const loadingOverlay       = document.getElementById('viewer-loading-overlay');
   const scanText             = document.getElementById('viewer-scan-text');
+  const liveFramesCount      = document.getElementById('viewer-live-frames-count');
   const progressFill         = document.getElementById('viewer-progress-fill');
   const progressBar          = document.getElementById('viewer-progress-bar');
   const liveFetchInfo        = document.getElementById('viewer-live-fetch-info');
@@ -522,6 +526,7 @@ export function initViewer(sky) {
   const btnCancel            = document.getElementById('viewer-btn-cancel');
   const fovButtonsContainer  = document.querySelector('.viewer-fov-buttons');
   const errorOverlay         = document.getElementById('viewer-error-overlay');
+  const errorTitle           = document.getElementById('viewer-error-title');
   const errorDesc            = document.getElementById('viewer-error-desc');
   const btnRetry             = document.getElementById('viewer-btn-retry');
   const btnUseSim            = document.getElementById('viewer-btn-use-sim');
@@ -633,15 +638,17 @@ export function initViewer(sky) {
     }
     stopElapsedCounter();
     loadingOverlay.style.display = 'none';
+    errorOverlay.style.display = 'none';
 
-    if (state.frames && state.frames.length > 0) {
+    if (state.isLiveRequest) {
+      goBackToProbeConfirmed();
+    } else if (state.frames && state.frames.length > 0) {
       state.fov = previousLoadedFov;
       updateScaleBar();
       renderFovControl(state.entryFov, state.fov);
       renderCurrentFrame();
     } else {
-      errorOverlay.style.display = 'flex';
-      errorDesc.textContent = 'Frame acquisition was cancelled.';
+      goBackToProbeConfirmed();
     }
   });
 
@@ -703,8 +710,11 @@ export function initViewer(sky) {
 
   // Expected Position Ring (target_xy)
   function renderExpectedPosition() {
+    if (btnToggleExpected) {
+      btnToggleExpected.style.display = state.live ? 'none' : '';
+    }
     if (!expectedPositionMarker) return;
-    if (!state.showExpectedPosition) {
+    if (state.live || !state.showExpectedPosition) {
       expectedPositionMarker.style.display = 'none';
       return;
     }
@@ -843,24 +853,46 @@ export function initViewer(sky) {
 
   // ─── Preload & Render Images onto Display Canvas ────────────────────────────
   async function loadFramesForTarget(ra, dec, fov, name, isNewEntry = false, options = {}) {
-    const fovNum = typeof fov === 'number' ? fov : parseFloat(fov);
-    state.ra = ra;
-    state.dec = dec;
-    state.fov = fovNum;
-    const targetInfo = getTargetInfo(name, ra, dec) || getSelectedTarget();
-    state.name = name || targetInfo?.name || "BARNARD'S STAR";
+    let fovNum = typeof fov === 'number' ? fov : parseFloat(fov);
+    let effectiveRa = ra;
+    let effectiveDec = dec;
+    let effectiveName = name;
 
-    if (sky) {
-      if (typeof sky.setProbeCoordinates === 'function') {
-        sky.setProbeCoordinates(ra, dec);
-      }
-      if (typeof sky.centerOnTarget === 'function') {
-        sky.centerOnTarget(ra, dec, 0);
+    // Snap to cached target if within 0.005 degrees and matching FOV
+    const cachedMatch = findMatchingCachedTarget(effectiveRa, effectiveDec, fovNum);
+    if (cachedMatch) {
+      effectiveRa = cachedMatch.ra;
+      effectiveDec = cachedMatch.dec;
+      fovNum = cachedMatch.fov;
+      if (!effectiveName || effectiveName === 'CUSTOM SPOT' || effectiveName === 'TYPED COORDS') {
+        effectiveName = cachedMatch.name;
       }
     }
 
+    state.ra = effectiveRa;
+    state.dec = effectiveDec;
+    state.fov = fovNum;
+    const targetInfo = getTargetInfo(effectiveName, effectiveRa, effectiveDec) || getSelectedTarget();
+    state.name = effectiveName || targetInfo?.name || "BARNARD'S STAR";
+
+    if (sky) {
+      if (typeof sky.setProbeCoordinates === 'function') {
+        sky.setProbeCoordinates(effectiveRa, effectiveDec);
+      }
+      if (typeof sky.centerOnTarget === 'function') {
+        sky.centerOnTarget(effectiveRa, effectiveDec, 0);
+      }
+    }
+
+    const isLive = Boolean(options.liveFetch);
+    state.isLiveRequest = isLive;
+
     if (understageCaption) {
-      understageCaption.textContent = getCaptionForTarget(state.name);
+      if (isLive || state.live) {
+        understageCaption.textContent = "Live fetch: frames are not aligned, so Blink may jitter. For the clearest view use the 5 featured targets.";
+      } else {
+        understageCaption.textContent = getCaptionForTarget(state.name);
+      }
     }
 
     if (isNewEntry || typeof state.entryFov !== 'number') {
@@ -870,25 +902,27 @@ export function initViewer(sky) {
     renderFovControl(state.entryFov, state.fov);
 
     infoTargetName.textContent = state.name;
-    infoValRa.textContent = formatRA(ra);
-    infoValDec.textContent = formatDec(dec);
+    infoValRa.textContent = formatRA(effectiveRa);
+    infoValDec.textContent = formatDec(effectiveDec);
 
     updateScaleBar();
 
     const fovFormatted = fovNum.toFixed(2);
-    const cacheKey = `${ra.toFixed(4)},${dec.toFixed(4)},${fovFormatted}`;
+    const cacheKey = `${effectiveRa.toFixed(4)},${effectiveDec.toFixed(4)},${fovFormatted}`;
 
     // Force simulated frames preview directly
     if (options.forceSimulated) {
       stopElapsedCounter();
       loadingOverlay.style.display = 'none';
       errorOverlay.style.display = 'none';
-      const sim = await generateSimFrames(ra, dec, fovNum, state.name);
+      state.live = false;
+      state.isLiveRequest = false;
+      const sim = await generateSimFrames(effectiveRa, effectiveDec, fovNum, state.name);
       state.frames = sim.frames;
       state.source = 'simulated';
       state.mock = true;
       previousLoadedFov = state.fov;
-      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock });
+      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock, live: false });
       populateFrameSelects();
       applyPairMode('best');
       setZoom(1);
@@ -916,8 +950,10 @@ export function initViewer(sky) {
       state.frames = preloadedResult.frames;
       state.source = preloadedResult.source;
       state.mock = Boolean(preloadedResult.mock === true || preloadedResult.source !== 'api');
+      state.live = Boolean(preloadedResult.live === true);
+      state.isLiveRequest = false;
       previousLoadedFov = state.fov;
-      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock });
+      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock, live: state.live });
       populateFrameSelects();
       applyPairMode('best');
       setZoom(1);
@@ -930,9 +966,12 @@ export function initViewer(sky) {
       state.frames = cached.frames;
       state.source = cached.source;
       state.mock = cached.mock ?? (cached.source !== 'api');
+      state.live = Boolean(cached.live === true);
+      state.isLiveRequest = false;
       previousLoadedFov = state.fov;
       stopElapsedCounter();
       loadingOverlay.style.display = 'none';
+      errorOverlay.style.display = 'none';
       populateFrameSelects();
       applyPairMode('best');
       setZoom(1);
@@ -947,8 +986,6 @@ export function initViewer(sky) {
     activeAbortController = new AbortController();
     const signal = activeAbortController.signal;
 
-    const isLive = Boolean(options.liveFetch);
-
     loadingOverlay.style.display = 'flex';
     errorOverlay.style.display = 'none';
 
@@ -956,12 +993,17 @@ export function initViewer(sky) {
       scanText.textContent = 'FETCHING REAL DATA... this can take several minutes';
       if (progressBar) progressBar.style.display = 'none';
       if (liveFetchInfo) liveFetchInfo.style.display = 'flex';
+      if (liveFramesCount) {
+        liveFramesCount.style.display = 'block';
+        liveFramesCount.textContent = 'FETCHING FRAMES...';
+      }
       startElapsedCounter();
     } else {
       scanText.textContent = 'SCANNING 9 FRAMES... 0/9';
       if (progressFill) progressFill.style.width = '0%';
       if (progressBar) progressBar.style.display = 'block';
       if (liveFetchInfo) liveFetchInfo.style.display = 'none';
+      if (liveFramesCount) liveFramesCount.style.display = 'none';
       stopElapsedCounter();
     }
 
@@ -978,13 +1020,20 @@ export function initViewer(sky) {
     }
 
     try {
-      const result = await getFrames(ra, dec, fovNum, {
+      const result = await getFrames(effectiveRa, effectiveDec, fovNum, {
         cachedOnly: !isLive,
-        name,
+        name: effectiveName,
         signal,
         onStatus: (d) => {
           const serverMsg = d?.message || 'FETCHING REAL DATA... this can take several minutes';
           scanText.textContent = serverMsg;
+          if (d?.progress && typeof d.progress.done === 'number' && typeof d.progress.total === 'number') {
+            const { done, total } = d.progress;
+            if (liveFramesCount) {
+              liveFramesCount.style.display = 'block';
+              liveFramesCount.textContent = total > 0 ? `${done}/${total} FRAMES` : `${done} FRAMES`;
+            }
+          }
           if (typeof d?.elapsed_seconds === 'number') {
             const sec = Math.max(0, Math.floor(d.elapsed_seconds));
             const mins = Math.floor(sec / 60);
@@ -1004,6 +1053,13 @@ export function initViewer(sky) {
           if (info && (info.status === 'fetching' || typeof info === 'object')) {
             const serverMsg = info.message || 'FETCHING REAL DATA... this can take several minutes';
             scanText.textContent = serverMsg;
+            if (info?.progress && typeof info.progress.done === 'number' && typeof info.progress.total === 'number') {
+              const { done, total } = info.progress;
+              if (liveFramesCount) {
+                liveFramesCount.style.display = 'block';
+                liveFramesCount.textContent = total > 0 ? `${done}/${total} FRAMES` : `${done} FRAMES`;
+              }
+            }
             if (typeof info.elapsed_seconds === 'number') {
               const sec = Math.max(0, Math.floor(info.elapsed_seconds));
               const mins = Math.floor(sec / 60);
@@ -1050,9 +1106,14 @@ export function initViewer(sky) {
       state.frames = result.frames;
       state.source = result.source;
       state.mock = Boolean(result.mock === true || result.source !== 'api');
+      state.live = Boolean(result.live === true);
       previousLoadedFov = state.fov;
 
-      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock });
+      if (understageCaption && state.live) {
+        understageCaption.textContent = "Live fetch: frames are not aligned, so Blink may jitter. For the clearest view use the 5 featured targets.";
+      }
+
+      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock, live: state.live });
 
       stopElapsedCounter();
       loadingOverlay.style.display = 'none';
@@ -1069,30 +1130,46 @@ export function initViewer(sky) {
       if (err.isNotCached || err.status === 404) {
         if (window.__argusHUD && typeof window.__argusHUD.showNotCachedDialog === 'function') {
           window.__argusHUD.showNotCachedDialog({
-            ra,
-            dec,
+            ra: effectiveRa,
+            dec: effectiveDec,
             fov: fovNum,
-            name,
+            name: effectiveName,
           });
         }
         return;
       }
 
       if (signal.aborted || err.name === 'AbortError') {
-        if (activeAbortController && activeAbortController.signal !== signal) return;
-        if (state.frames && state.frames.length > 0) {
-          state.fov = previousLoadedFov;
-          updateScaleBar();
-          renderFovControl(state.entryFov, state.fov);
-          renderCurrentFrame();
-        } else {
-          errorOverlay.style.display = 'flex';
-          errorDesc.textContent = err.message || 'Frame acquisition was cancelled.';
+        loadingOverlay.style.display = 'none';
+        errorOverlay.style.display = 'none';
+        return;
+      }
+
+      if (err.isBusy || err.status === 429) {
+        errorOverlay.style.display = 'flex';
+        if (errorTitle) errorTitle.textContent = 'SERVER BUSY';
+        const waitSec = err.retryAfter || 30;
+        errorDesc.textContent = `SERVER BUSY, TRY AGAIN IN ${waitSec} s`;
+        if (btnRetry) {
+          btnRetry.style.display = 'inline-block';
+          btnRetry.textContent = 'RETRY';
+        }
+        if (btnUseSim) {
+          btnUseSim.style.display = 'inline-block';
         }
         return;
       }
+
       errorOverlay.style.display = 'flex';
+      if (errorTitle) errorTitle.textContent = 'FRAME ACQUISITION FAILED';
       errorDesc.textContent = err.message || 'Unable to retrieve frames.';
+      if (btnRetry) {
+        btnRetry.style.display = 'inline-block';
+        btnRetry.textContent = 'RETRY';
+      }
+      if (btnUseSim) {
+        btnUseSim.style.display = 'inline-block';
+      }
       console.warn('Frame acquisition error:', err);
     }
   }
@@ -1111,8 +1188,11 @@ export function initViewer(sky) {
       state.avgFrameTimeMs = frameTimeHistory.reduce((a, b) => a + b, 0) / frameTimeHistory.length;
     }
 
-    // Source Badge: "SIMULATED FRAMES" if the API response has mock: true (or no API is set), otherwise "SPHEREX DATA"
-    if (state.source === 'api' && state.mock !== true) {
+    // Source Badge: "SPHEREX DATA (LIVE)" with "NOT ALIGNED", "SPHEREX DATA", or "SIMULATED FRAMES"
+    if (state.live) {
+      stageSourceBadge.className = 'stage-source-badge live';
+      stageSourceText.innerHTML = 'SPHEREX DATA (LIVE) <span class="tag-not-aligned">NOT ALIGNED</span>';
+    } else if (state.source === 'api' && state.mock !== true) {
       stageSourceBadge.className = 'stage-source-badge api';
       stageSourceText.textContent = 'SPHEREX DATA';
     } else {
@@ -1405,7 +1485,10 @@ export function initViewer(sky) {
 
   // Error Actions
   btnRetry.addEventListener('click', () => {
-    loadFramesForTarget(state.ra, state.dec, state.fov, state.name, false);
+    errorOverlay.style.display = 'none';
+    loadFramesForTarget(state.ra, state.dec, state.fov, state.name, false, {
+      liveFetch: Boolean(state.isLiveRequest),
+    });
   });
 
   btnUseSim.addEventListener('click', () => {
@@ -1416,6 +1499,13 @@ export function initViewer(sky) {
 
   // Navigation Buttons
   function goBackToProbeConfirmed() {
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    stopElapsedCounter();
+    loadingOverlay.style.display = 'none';
+    errorOverlay.style.display = 'none';
     if (playbackTimer) clearTimeout(playbackTimer);
     if (typeof window.setScreen === 'function') {
       window.setScreen('probe');

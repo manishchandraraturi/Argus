@@ -34,6 +34,38 @@ export function getAllowLiveFetch() {
   return ALLOW_LIVE_FETCH;
 }
 
+// ─── Pre-cached Survey Targets ─────────────────────────────────────────────
+export const CACHED_TARGETS = [
+  { name: "WISE 0855", ra: 133.795, dec: -7.245, fov: 0.20 },
+  { name: "Barnard's Star", ra: 269.452, dec: 4.693, fov: 0.20 },
+  { name: "Epsilon Indi B", ra: 331.044, dec: -56.783, fov: 0.15 },
+  { name: "RW Aurigae", ra: 76.956, dec: 30.401, fov: 0.20 },
+  { name: "R Draconis", ra: 248.168, dec: 66.755, fov: 0.20 },
+];
+
+/**
+ * Checks if coordinates and FOV are within 0.005 degrees of a pre-cached target.
+ * If matched, returns that target object so cached data can be used with zero live fetch.
+ *
+ * @param {number|string} ra
+ * @param {number|string} dec
+ * @param {number|string} fov
+ * @returns {object|null}
+ */
+export function findMatchingCachedTarget(ra, dec, fov) {
+  const raNum = typeof ra === 'number' ? ra : parseFloat(ra);
+  const decNum = typeof dec === 'number' ? dec : parseFloat(dec);
+  const fovNum = typeof fov === 'number' ? fov : parseFloat(fov);
+  if (isNaN(raNum) || isNaN(decNum) || isNaN(fovNum)) return null;
+
+  return CACHED_TARGETS.find(t => {
+    const dRa = Math.abs(t.ra - raNum);
+    const dDec = Math.abs(t.dec - decNum);
+    const dFov = Math.abs(t.fov - fovNum);
+    return dRa <= 0.005 && dDec <= 0.005 && dFov < 0.001;
+  }) || null;
+}
+
 // ─── Selected Target Global State ──────────────────────────────────────────
 export let selectedTarget = null;
 
@@ -133,10 +165,21 @@ export async function getFrames(ra, dec, fov = 0.20, optionsOrName = {}, onProgr
   }
 
   const selected = getSelectedTarget();
-  const effectiveRa = (typeof ra === 'number') ? ra : (ra !== undefined && ra !== null && !isNaN(parseFloat(ra)) ? parseFloat(ra) : (selected?.ra ?? 269.452));
-  const effectiveDec = (typeof dec === 'number') ? dec : (dec !== undefined && dec !== null && !isNaN(parseFloat(dec)) ? parseFloat(dec) : (selected?.dec ?? 4.693));
-  const effectiveFov = (typeof fov === 'number') ? fov : (fov !== undefined && fov !== null && !isNaN(parseFloat(fov)) ? parseFloat(fov) : (selected?.fov ?? 0.20));
-  const effectiveName = name || selected?.name || '';
+  let effectiveRa = (typeof ra === 'number') ? ra : (ra !== undefined && ra !== null && !isNaN(parseFloat(ra)) ? parseFloat(ra) : (selected?.ra ?? 269.452));
+  let effectiveDec = (typeof dec === 'number') ? dec : (dec !== undefined && dec !== null && !isNaN(parseFloat(dec)) ? parseFloat(dec) : (selected?.dec ?? 4.693));
+  let effectiveFov = (typeof fov === 'number') ? fov : (fov !== undefined && fov !== null && !isNaN(parseFloat(fov)) ? parseFloat(fov) : (selected?.fov ?? 0.20));
+  let effectiveName = name || selected?.name || '';
+
+  // If coordinates are within 0.005 degrees of a cached target AND FOV matches, snap to cached target
+  const cachedMatch = findMatchingCachedTarget(effectiveRa, effectiveDec, effectiveFov);
+  if (cachedMatch) {
+    effectiveRa = cachedMatch.ra;
+    effectiveDec = cachedMatch.dec;
+    effectiveFov = cachedMatch.fov;
+    if (!effectiveName || effectiveName === 'CUSTOM SPOT' || effectiveName === 'TYPED COORDS') {
+      effectiveName = cachedMatch.name;
+    }
+  }
 
   const formattedRa = effectiveRa.toFixed(3);
   const formattedDec = effectiveDec.toFixed(3);
@@ -213,8 +256,37 @@ export async function getFrames(ra, dec, fov = 0.20, optionsOrName = {}, onProgr
           notCachedErr.isNotCached = true;
           throw notCachedErr;
         }
+        if (res.status === 429) {
+          let retryAfter = 30;
+          try {
+            const errData = await res.json();
+            if (errData && typeof errData.retry_after === 'number') {
+              retryAfter = Math.max(1, Math.round(errData.retry_after));
+            }
+          } catch {
+            const retryHeader = res.headers ? res.headers.get('Retry-After') : null;
+            if (retryHeader) {
+              const parsed = parseInt(retryHeader, 10);
+              if (!isNaN(parsed)) retryAfter = Math.max(1, parsed);
+            }
+          }
+          const busyErr = new Error(`SERVER BUSY, TRY AGAIN IN ${retryAfter} s`);
+          busyErr.status = 429;
+          busyErr.isBusy = true;
+          busyErr.retryAfter = retryAfter;
+          throw busyErr;
+        }
         if (!res.ok) {
-          const httpErr = new Error(`API HTTP ${res.status}: ${res.statusText}`);
+          let errMsg = `API HTTP ${res.status}: ${res.statusText}`;
+          try {
+            const errJson = await res.json();
+            if (errJson && errJson.error) {
+              errMsg = errJson.error;
+            } else if (errJson && errJson.detail) {
+              errMsg = errJson.detail;
+            }
+          } catch {}
+          const httpErr = new Error(errMsg);
           httpErr.status = res.status;
           throw httpErr;
         }
@@ -231,7 +303,7 @@ export async function getFrames(ra, dec, fov = 0.20, optionsOrName = {}, onProgr
             ...data,
           }, data.elapsed_seconds);
         }
-        await delayWithSignal(5000, sig);
+        await delayWithSignal(2000, sig);
       }
       // Handle both { frames: [...] } and array responses
       const frameList = Array.isArray(data) ? data : (data.frames || []);
@@ -258,6 +330,8 @@ export async function getFrames(ra, dec, fov = 0.20, optionsOrName = {}, onProgr
         frames: formattedFrames,
         source: 'api',
         mock: Boolean(data && data.mock === true),
+        live: Boolean(data && data.live === true),
+        aligned: Boolean(data && data.aligned === true),
       };
     } catch (err) {
       if (err.name === 'AbortError') {
@@ -265,6 +339,10 @@ export async function getFrames(ra, dec, fov = 0.20, optionsOrName = {}, onProgr
       }
       // If 404 "not cached", rethrow so caller shows the HUD dialog
       if (err.isNotCached || err.status === 404) {
+        throw err;
+      }
+      // If 429 busy, rethrow so caller shows busy error with RETRY button
+      if (err.isBusy || err.status === 429) {
         throw err;
       }
       // Re-throw so caller (HUD or Viewer) can immediately transition to simulated preview or error state

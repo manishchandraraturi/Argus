@@ -1,5 +1,5 @@
 import { TARGETS, isCachedDemoTarget } from './targets.js';
-import { API_BASE, ALLOW_LIVE_FETCH, getApiBase, getAllowLiveFetch, getRequestUrl, getFrames, setSelectedTarget, getSelectedTarget } from './api.js';
+import { API_BASE, ALLOW_LIVE_FETCH, getApiBase, getAllowLiveFetch, getRequestUrl, getFrames, setSelectedTarget, getSelectedTarget, findMatchingCachedTarget } from './api.js';
 
 // ─── 11. ARGUS Brand Constant ─────────────────────────────────────────────────
 export const PROJECT_NAME = "ARGUS";
@@ -905,18 +905,40 @@ export function initHUD(sky) {
       coordsEl.textContent = `RA ${target.ra.toFixed(3)}° // DEC ${decSign}${target.dec.toFixed(3)}° // FOV ${target.fov.toFixed(2)}°`;
     }
 
+    const titleEl = dialogEl.querySelector('.hud-modal-title');
+    const descEl = dialogEl.querySelector('.hud-modal-desc');
     const btnSimPreview = dialogEl.querySelector('#btn-dialog-sim-preview');
     const btnLiveFetch = dialogEl.querySelector('#btn-dialog-live-fetch');
+    const liveContainer = dialogEl.querySelector('#dialog-live-fetch-container');
     const noticeEl = dialogEl.querySelector('#dialog-live-notice');
     const btnCancel = dialogEl.querySelector('#btn-dialog-cancel');
+    const actionsEl = dialogEl.querySelector('.hud-modal-actions');
 
-    if (btnLiveFetch && noticeEl) {
-      if (getAllowLiveFetch()) {
+    const allowLive = getAllowLiveFetch();
+
+    if (allowLive) {
+      if (titleEl) titleEl.textContent = 'REAL DATA IS NOT PRE-LOADED FOR THIS SPOT';
+      if (descEl) descEl.textContent = 'A LIVE FETCH TAKES ABOUT 1 TO 2 MINUTES AND CAN TAKE LONGER.';
+      if (btnLiveFetch) {
         btnLiveFetch.style.display = 'flex';
-        noticeEl.style.display = 'none';
-      } else {
-        btnLiveFetch.style.display = 'none';
+        const span = btnLiveFetch.querySelector('span:not(.corner-tick)') || btnLiveFetch;
+        span.textContent = 'FETCH REAL DATA';
+      }
+      if (noticeEl) noticeEl.style.display = 'none';
+      if (actionsEl && liveContainer && btnSimPreview) {
+        actionsEl.insertBefore(liveContainer, btnSimPreview);
+      }
+    } else {
+      // Keep today's behavior when VITE_ALLOW_LIVE_FETCH is not true
+      if (titleEl) titleEl.textContent = 'REAL DATA IS NOT PRE-LOADED FOR THIS SPOT';
+      if (descEl) descEl.textContent = 'This sky location has not been pre-cached in the local SPHEREX demo survey database.';
+      if (btnLiveFetch) btnLiveFetch.style.display = 'none';
+      if (noticeEl) {
         noticeEl.style.display = 'block';
+        noticeEl.textContent = 'Live fetching for new positions is only available on the demo laptop. Real data is pre-loaded for the 5 demo targets.';
+      }
+      if (actionsEl && liveContainer && btnSimPreview) {
+        actionsEl.insertBefore(btnSimPreview, liveContainer);
       }
     }
 
@@ -924,25 +946,27 @@ export function initHUD(sky) {
       dialogEl.style.display = 'none';
     }
 
-    // Button 1: SIMULATED PREVIEW (INSTANT)
-    btnSimPreview.onclick = () => {
-      closeDialog();
-      setLocBarState('editing');
-      if (typeof window.setScreen === 'function') {
-        window.setScreen('viewer', false);
-      }
-      window.dispatchEvent(new CustomEvent('argus:probe', {
-        detail: {
-          ra: target.ra,
-          dec: target.dec,
-          fov: target.fov,
-          name: target.name,
-          forceSimulated: true,
-        },
-      }));
-    };
+    // Button: SIMULATED PREVIEW (INSTANT)
+    if (btnSimPreview) {
+      btnSimPreview.onclick = () => {
+        closeDialog();
+        setLocBarState('editing');
+        if (typeof window.setScreen === 'function') {
+          window.setScreen('viewer', false);
+        }
+        window.dispatchEvent(new CustomEvent('argus:probe', {
+          detail: {
+            ra: target.ra,
+            dec: target.dec,
+            fov: target.fov,
+            name: target.name,
+            forceSimulated: true,
+          },
+        }));
+      };
+    }
 
-    // Button 2: FETCH REAL DATA (MAY TAKE SEVERAL MINUTES)
+    // Button: FETCH REAL DATA
     if (btnLiveFetch) {
       btnLiveFetch.onclick = () => {
         closeDialog();
@@ -962,52 +986,34 @@ export function initHUD(sky) {
       };
     }
 
-    btnCancel.onclick = () => {
-      closeDialog();
-    };
+    if (btnCancel) {
+      btnCancel.onclick = () => {
+        closeDialog();
+      };
+    }
 
     dialogEl.style.display = 'flex';
   }
 
-  async function updateConfirmBarCacheStatus(ra, dec, fov) {
+  function updateConfirmBarCacheStatus(ra, dec, fov) {
     const fovNum = typeof fov === 'number' ? fov : parseFloat(fov);
-    const isDemo = isCachedDemoTarget(ra, dec, fovNum);
-    let isCached = isDemo;
+    const cachedMatch = findMatchingCachedTarget(ra, dec, fovNum);
+    const isCached = Boolean(cachedMatch || isCachedDemoTarget(ra, dec, fovNum));
 
     const cacheStatusEl = locationBarEl.querySelector('#locbar-cache-status');
     const confirmedTagEl = locationBarEl.querySelector('#locbar-confirmed-tag');
 
-    function renderStatus(cached) {
-      if (cacheStatusEl) {
-        cacheStatusEl.textContent = cached
-          ? 'INSTANT REAL DATA'
-          : 'NO PRE-LOADED DATA, SIMULATED PREVIEW OR SLOW LIVE FETCH';
-        cacheStatusEl.className = cached ? 'locbar-cache-status cached' : 'locbar-cache-status not-cached';
-      }
-      if (confirmedTagEl) {
-        confirmedTagEl.textContent = cached
-          ? '✓ LOCATION CONFIRMED — INSTANT REAL DATA'
-          : '✓ LOCATION CONFIRMED — NO PRE-LOADED DATA, SIMULATED PREVIEW OR SLOW LIVE FETCH';
-        confirmedTagEl.className = cached ? 'locbar-confirmed-tag cached' : 'locbar-confirmed-tag not-cached';
-      }
+    if (cacheStatusEl) {
+      cacheStatusEl.textContent = isCached
+        ? 'INSTANT REAL DATA'
+        : 'NO PRE-LOADED DATA, SIMULATED PREVIEW OR SLOW LIVE FETCH';
+      cacheStatusEl.className = isCached ? 'locbar-cache-status cached' : 'locbar-cache-status not-cached';
     }
-
-    renderStatus(isCached);
-
-    const apiBase = getApiBase();
-    if (apiBase) {
-      try {
-        const url = getRequestUrl(ra, dec, fovNum, apiBase, { cachedOnly: true });
-        const res = await fetch(url);
-        if (res.status === 404) {
-          isCached = false;
-        } else if (res.ok) {
-          isCached = true;
-        }
-        renderStatus(isCached);
-      } catch {
-        // network or unreachable
-      }
+    if (confirmedTagEl) {
+      confirmedTagEl.textContent = isCached
+        ? '✓ LOCATION CONFIRMED — INSTANT REAL DATA'
+        : '✓ LOCATION CONFIRMED — NO PRE-LOADED DATA, SIMULATED PREVIEW OR SLOW LIVE FETCH';
+      confirmedTagEl.className = isCached ? 'locbar-confirmed-tag cached' : 'locbar-confirmed-tag not-cached';
     }
   }
 
@@ -1084,10 +1090,21 @@ export function initHUD(sky) {
       if (locationBarState !== 'confirmed') return;
       setLocBarState('loading');
 
-      const fovValue = typeof probeState.fov === 'number' ? probeState.fov : 0.20;
-      const raValue = probeState.ra;
-      const decValue = probeState.dec;
-      const targetName = currentTargetName;
+      let fovValue = typeof probeState.fov === 'number' ? probeState.fov : 0.20;
+      let raValue = probeState.ra;
+      let decValue = probeState.dec;
+      let targetName = currentTargetName;
+
+      // If coordinates are within 0.005 degrees of a cached target AND FOV matches, snap to cached target
+      const cachedMatch = findMatchingCachedTarget(raValue, decValue, fovValue);
+      if (cachedMatch) {
+        raValue = cachedMatch.ra;
+        decValue = cachedMatch.dec;
+        fovValue = cachedMatch.fov;
+        if (!targetName || targetName === 'CUSTOM SPOT' || targetName === 'TYPED COORDS') {
+          targetName = cachedMatch.name;
+        }
+      }
 
       const currentSelected = {
         name: targetName,

@@ -241,6 +241,27 @@ body.screen-viewer [role="button"] {
   box-shadow: 0 0 10px rgba(74, 222, 128, 0.2);
 }
 
+.stage-source-badge.live {
+  color: #38bdf8;
+  border: 1px solid #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+.tag-not-aligned {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  border-radius: 2px;
+  background: rgba(232, 163, 23, 0.25);
+  border: 1px solid var(--color-amber);
+  color: var(--color-amber);
+  vertical-align: middle;
+}
+
 .stage-badge-dot {
   width: 6px;
   height: 6px;
@@ -255,6 +276,11 @@ body.screen-viewer [role="button"] {
 .stage-source-badge.api .stage-badge-dot {
   background: var(--color-green);
   box-shadow: 0 0 6px var(--color-green);
+}
+
+.stage-source-badge.live .stage-badge-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 6px #38bdf8;
 }
 
 /* Scale Bar at Bottom-Left */
@@ -419,6 +445,16 @@ body.screen-viewer [role="button"] {
   box-shadow: 0 0 10px var(--color-amber);
   width: 0%;
   transition: width 150ms ease;
+}
+
+.viewer-live-frames-count {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #38bdf8;
+  text-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+  margin-top: 4px;
 }
 
 /* Live NASA Data Fetch Info (Elapsed Timer & Cancel Button) */
