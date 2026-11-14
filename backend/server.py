@@ -41,6 +41,9 @@ from convert import array_to_png
 # ── Settings ──────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
 PNG_DIR = BASE_DIR / "cache" / "png"
+LIVE_PNG_DIR = PNG_DIR / "live"
+LIVE_CACHE_DIR = BASE_DIR / "cache" / "live_json"
+FITS_DIR = BASE_DIR / "cache" / "fits"
 N_FRAMES = 9
 FRAME_SIZE = 600
 START_DATE = date(2026, 1, 1)
@@ -53,7 +56,14 @@ FETCH_MESSAGE = ("Fetching new frames from IRSA. This can take many minutes righ
 _cache = {}                 # (mode, ra, dec, fov) -> list of frame dicts
 _lock = threading.Lock()    # so two requests for the same place do not build the files twice
 _jobs = {}                  # live (real mode) fetches running in the background: key -> job dict
+_live_memory_cache = {}     # live_key -> {"frames": [...], "finished_at": float}
 _warned = set()             # demo_cache warnings, printed only once each
+
+PNG_DIR.mkdir(parents=True, exist_ok=True)
+LIVE_PNG_DIR.mkdir(parents=True, exist_ok=True)
+LIVE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+FITS_DIR.mkdir(parents=True, exist_ok=True)
+DEMO_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def is_mock():
@@ -61,8 +71,32 @@ def is_mock():
     return os.environ.get("MOCK", "1") != "0"
 
 
+def is_live_enabled():
+    """ENABLE_LIVE defaults to 1. When 0, uncached positions return 404."""
+    return os.environ.get("ENABLE_LIVE", "1") != "0"
+
+
+def get_live_max_jobs():
+    try:
+        return int(os.environ.get("LIVE_MAX_JOBS", "1"))
+    except (ValueError, TypeError):
+        return 1
+
+
+def get_live_job_max_s():
+    try:
+        return float(os.environ.get("LIVE_JOB_MAX_S", "180"))
+    except (ValueError, TypeError):
+        return 180.0
+
+
 def cache_key(ra, dec, fov):
     return (round(ra, 5), round(dec, 5), round(fov, 5))
+
+
+def live_key(ra, dec, fov):
+    """RA with 3 decimals, Dec with 3 decimals, FOV with 2 decimals."""
+    return (round(float(ra), 3), round(float(dec), 3), round(abs(float(fov)), 2))
 
 
 def file_stem(mode, key):
@@ -227,67 +261,212 @@ def load_demo_index():
     return index
 
 
-# ── Part 1d: cache, background live fetch, and one entry point ────────────────
-def _run_job(key, ra, dec, fov, stem):
-    """Runs in a background thread: one live fetch can take many minutes."""
+# ── Part 1d: cache, background live fetch, and cleanup ────────────────────────
+def cleanup_live_cache(max_age_s=3600, max_bytes=200 * 1024 * 1024):
+    """
+    Delete live PNG and FITS files older than 1 hour (3600s),
+    and keep the live cache under 200 MB.
+    Also evict memory cache entries older than 30 minutes (1800s).
+    """
+    now = time.time()
+    with _lock:
+        expired_keys = [
+            k for k, v in _live_memory_cache.items()
+            if now - v.get("finished_at", 0) > 1800
+        ]
+        for k in expired_keys:
+            del _live_memory_cache[k]
+
+    live_files = []
+    if LIVE_PNG_DIR.exists():
+        for p in LIVE_PNG_DIR.iterdir():
+            if p.is_file() and not p.name.startswith("."):
+                live_files.append(p)
+    if FITS_DIR.exists():
+        for p in FITS_DIR.iterdir():
+            if p.is_file() and not p.name.startswith("."):
+                live_files.append(p)
+
+    surviving = []
+    for f in live_files:
+        try:
+            mtime = f.stat().st_mtime
+            if now - mtime > max_age_s:
+                f.unlink(missing_ok=True)
+            else:
+                surviving.append((f, f.stat().st_size, mtime))
+        except OSError:
+            pass
+
+    total_size = sum(sz for _, sz, _ in surviving)
+    if total_size > max_bytes:
+        surviving.sort(key=lambda x: x[2])  # oldest mtime first
+        for f, sz, _ in surviving:
+            try:
+                f.unlink(missing_ok=True)
+                total_size -= sz
+                if total_size <= max_bytes:
+                    break
+            except OSError:
+                pass
+
+
+def _get_finished_live_frames(key, stem):
+    """
+    Checks memory cache (up to 30 min) and disk cache (up to 1 hour).
+    Returns list of frame dicts if valid, or None.
+    """
+    now = time.time()
+    with _lock:
+        mem = _live_memory_cache.get(key)
+        if mem:
+            if now - mem.get("finished_at", 0) <= 1800:
+                frames = mem.get("frames", [])
+                if frames and all((PNG_DIR / f["filename"]).is_file() for f in frames):
+                    return frames
+            else:
+                del _live_memory_cache[key]
+
+    disk_file = LIVE_CACHE_DIR / f"{stem}.json"
+    if disk_file.is_file():
+        try:
+            mtime = disk_file.stat().st_mtime
+            if now - mtime <= 3600:
+                frames = json.loads(disk_file.read_text(encoding="utf-8"))
+                if frames and all((PNG_DIR / f["filename"]).is_file() for f in frames):
+                    with _lock:
+                        _live_memory_cache[key] = {"frames": frames, "finished_at": mtime}
+                    return frames
+        except Exception:
+            pass
+    return None
+
+
+def _fake_mock_live(ra, dec, fov, on_frame, progress_cb, max_frames=6):
+    """
+    Fake live cutout generator when MOCK_LIVE=1.
+    Produces 6 sample frames, one per second, so the whole job flow can be tested without IRSA.
+    """
+    total = max_frames
+    if progress_cb:
+        progress_cb(0, total)
+
+    FITS_DIR.mkdir(parents=True, exist_ok=True)
+
+    for i in range(total):
+        time.sleep(1.0)
+        d = date(2026, 1, 1) + timedelta(days=30 * i)
+        sample_fits = FITS_DIR / f"mock_sample_{i}.fits"
+        if not sample_fits.exists():
+            from astropy.io import fits
+            data = np.zeros((100, 100), dtype=np.float32)
+            data[30 + i * 5 : 50 + i * 5, 30 + i * 5 : 50 + i * 5] = 100.0
+            hdu = fits.PrimaryHDU()
+            img_hdu = fits.ImageHDU(data=data, name="IMAGE")
+            hdul = fits.HDUList([hdu, img_hdu])
+            hdul.writeto(sample_fits, overwrite=True)
+
+        item = {
+            "date": d.isoformat(),
+            "detector": 1 + (i % 3),
+            "fits_path": str(sample_fits),
+            "wavelength_um": round(1.2 + 0.1 * i, 2),
+            "flags": "",
+        }
+        if on_frame:
+            on_frame(item)
+        if progress_cb:
+            progress_cb(i + 1, total)
+
+
+def _run_live_job(key, ra, dec, fov, stem):
+    """
+    Runs in a background thread: live fetch and streaming PNG conversion.
+    Fails only if fewer than 3 PNGs exist.
+    """
     try:
-        frames = make_real_frames(ra, dec, fov, stem)
+        LIVE_PNG_DIR.mkdir(parents=True, exist_ok=True)
+        LIVE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        converted_frames = []
+        conv_lock = threading.Lock()
+
+        def _on_frame(item):
+            fits_path = item.get("fits_path")
+            if not fits_path or not os.path.exists(fits_path):
+                print(f"[live_job] Missing fits_path: {fits_path}")
+                return
+            idx = len(converted_frames)
+            d_str = item.get("date") or f"frame_{idx}"
+            png_name = f"{stem}_{idx}_{d_str}.png"
+            png_path = LIVE_PNG_DIR / png_name
+            try:
+                from convert import fits_to_png
+                fits_to_png(fits_path, png_path, size=FRAME_SIZE)
+                with conv_lock:
+                    converted_frames.append({
+                        "date": item.get("date"),
+                        "filename": f"live/{png_name}",
+                        "url_path": f"images/live/{png_name}",
+                        "detector": item.get("detector"),
+                        "wavelength_um": item.get("wavelength_um"),
+                        "flags": item.get("flags"),
+                        "aligned": False,
+                    })
+            except Exception as e:
+                print(f"[live_job] Warning: failed to convert {fits_path} to PNG: {e}")
+
+        def _progress_cb(done, total):
+            with _lock:
+                if key in _jobs:
+                    _jobs[key]["progress"] = {"done": done, "total": total}
+
+        if os.environ.get("MOCK_LIVE") == "1":
+            _fake_mock_live(ra, dec, fov, on_frame=_on_frame, progress_cb=_progress_cb, max_frames=6)
+        else:
+            try:
+                from data_fetch import fetch_cutouts
+            except Exception as e:
+                raise RuntimeError(f"cannot import data_fetch: {e}")
+            fetch_cutouts(
+                ra, dec, fov,
+                max_frames=12,
+                on_frame=_on_frame,
+                progress_cb=_progress_cb,
+            )
+
+        if len(converted_frames) < 3:
+            raise RuntimeError(f"live fetch incomplete: only {len(converted_frames)} frames converted (minimum 3 required)")
+
+        converted_frames.sort(key=lambda f: (f["date"] is None, f["date"] or ""))
+
+        # Persist to disk
+        disk_file = LIVE_CACHE_DIR / f"{stem}.json"
+        tmp_disk = LIVE_CACHE_DIR / f"{stem}.json.tmp.{os.getpid()}"
+        with open(tmp_disk, "w", encoding="utf-8") as f:
+            json.dump(converted_frames, f, indent=2)
+        os.replace(tmp_disk, disk_file)
+
+        now = time.time()
         with _lock:
-            _jobs[key].update(state="done", frames=frames)
+            if key in _jobs:
+                _jobs[key].update(
+                    state="done",
+                    frames=converted_frames,
+                    finished_at=now,
+                )
+            _live_memory_cache[key] = {
+                "frames": converted_frames,
+                "finished_at": now,
+            }
+        cleanup_live_cache()
     except Exception as e:
         with _lock:
-            _jobs[key].update(state="error", error=str(e) or e.__class__.__name__)
-
-
-def get_frames(ra, dec, fov):
-    """
-    Returns {"frames": [...], "mock": bool, "pending": bool, "elapsed": seconds}.
-    Order of work:
-      1. demo_cache (pre-fetched real frames, no IRSA call)
-      2. MOCK mode: fake frames
-      3. real mode: finished results, else a background fetch (pending=True until it is done)
-    """
-    demo = load_demo_index().get(demo_key(ra, dec, fov))
-    if demo:
-        return {"frames": demo, "mock": False, "pending": False, "elapsed": 0}
-
-    mock = is_mock()
-    mode = "mock" if mock else "real"
-    key = (mode,) + cache_key(ra, dec, fov)
-
-    with _lock:
-        cached = _cache.get(key)
-        if cached and all((PNG_DIR / f["filename"]).exists() for f in cached):
-            return {"frames": cached, "mock": mock, "pending": False, "elapsed": 0}
-
-    if mock:
-        with _lock:
-            frames = make_mock_frames(ra, dec, file_stem(mode, key))
-            _cache[key] = frames
-        return {"frames": frames, "mock": True, "pending": False, "elapsed": 0}
-
-    # ---- real mode: background job ----
-    with _lock:
-        job = _jobs.get(key)
-        if job is None:
-            job = {"state": "running", "started": time.time()}
-            job["thread"] = threading.Thread(target=_run_job, args=(key, ra, dec, fov, file_stem(mode, key)),
-                                             daemon=True)
-            _jobs[key] = job
-            job["thread"].start()
-    job["thread"].join(timeout=2.0)          # quick errors (for example a missing module) show up at once
-
-    with _lock:
-        state = job["state"]
-        if state == "running":
-            return {"frames": [], "mock": False, "pending": True, "elapsed": int(time.time() - job["started"])}
-        del _jobs[key]                        # finished: the next request starts fresh if needed
-        if state == "error":
-            raise RuntimeError(job["error"])
-        frames = job["frames"]
-        if frames:                            # do not cache an empty answer, so a later retry can find data
-            _cache[key] = frames
-        return {"frames": frames, "mock": False, "pending": False, "elapsed": 0}
+            if key in _jobs:
+                _jobs[key].update(
+                    state="error",
+                    error=str(e) or e.__class__.__name__,
+                    finished_at=time.time(),
+                )
 
 
 def is_cached(ra, dec, fov):
@@ -318,9 +497,6 @@ from fastapi.middleware.cors import CORSMiddleware              # noqa: E402
 from fastapi.responses import JSONResponse                      # noqa: E402
 from fastapi.staticfiles import StaticFiles                     # noqa: E402
 
-PNG_DIR.mkdir(parents=True, exist_ok=True)
-DEMO_DIR.mkdir(parents=True, exist_ok=True)
-
 app = FastAPI(title="ARGUS frames server")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/images", StaticFiles(directory=str(PNG_DIR)), name="images")
@@ -335,6 +511,36 @@ def health():
 def _error(message):
     """Every failure is HTTP 502 with {"error": "short message"} (see API.md)."""
     return JSONResponse(status_code=502, content={"error": str(message)[:200] or "unknown error"})
+
+
+def _format_frames_response(request: Request, frame_list: list, mock: bool = False, live: bool = False):
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if host:
+        base = f"{proto}://{host}/"
+    else:
+        base = str(request.base_url)
+        if not base.endswith("/"):
+            base += "/"
+    out = []
+    for f in frame_list:
+        item = {"date": f["date"], "image_url": base + f["url_path"]}
+        for key in ("detector", "wavelength_um", "flags"):
+            if f.get(key) is not None:
+                item[key] = f[key]
+        if live:
+            item["aligned"] = False
+            # Live frames NEVER have target_xy
+        else:
+            txy = f.get("target_xy")
+            if (isinstance(txy, list) and len(txy) == 2
+                    and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in txy)):
+                item["target_xy"] = txy
+        out.append(item)
+    resp = {"frames": out, "mock": mock}
+    if live:
+        resp["live"] = True
+    return resp
 
 
 @app.get("/frames")
@@ -355,41 +561,113 @@ def frames(request: Request,
     except ValueError as e:
         return _error(e)
 
-    # 1b) cached_only=1: real mode answers 404 when the position is not already cached (no IRSA call)
+    # 1b) cached demo targets (demo_cache_final)
+    d_key = demo_key(ra_v, dec_v, fov_v)
+    demo = load_demo_index().get(d_key)
+    if demo:
+        return _format_frames_response(request, demo, mock=False, live=False)
+
+    l_key = live_key(ra_v, dec_v, fov_v)
+    stem = f"live_{l_key[0]:.3f}_{l_key[1]:.3f}_{l_key[2]:.2f}"
+
+    # 1c) cached_only=1: real mode answers 404 when the position is not already cached (no IRSA call)
     if cached_only in ("1", "true") and not is_mock() and not is_cached(ra_v, dec_v, fov_v):
         return JSONResponse(status_code=404, content={"error": "not cached"})
 
-    # 2) build or fetch the frames
-    try:
-        result = get_frames(ra_v, dec_v, fov_v)
-    except Exception as e:
-        return _error(str(e) or e.__class__.__name__)
+    # 1d) ENABLE_LIVE: when "0", an uncached position returns HTTP 404 {"error": "not cached"} immediately
+    if not is_live_enabled():
+        return JSONResponse(status_code=404, content={"error": "not cached"})
 
-    if result["pending"]:      # slow live fetch still running: the frontend should show the message and ask again
-        return {"frames": [], "mock": False, "status": "fetching",
-                "message": FETCH_MESSAGE, "elapsed_seconds": result["elapsed"]}
-    frame_list, mock = result["frames"], result["mock"]
-    if not frame_list:
-        return {"frames": [], "mock": mock}
+    # 1e) Check finished live cache
+    cached_live = _get_finished_live_frames(l_key, stem)
+    if cached_live:
+        return _format_frames_response(request, cached_live, mock=False, live=True)
 
-    # 3) build image_url from the base URL of this request (e.g. http://localhost:8000/)
-    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
-    if host:
-        base = f"{proto}://{host}/"
-    else:
-        base = str(request.base_url)
-        if not base.endswith("/"):
-            base += "/"
-    out = []
-    for f in frame_list:
-        item = {"date": f["date"], "image_url": base + f["url_path"]}
-        for key in ("detector", "wavelength_um", "flags"):     # optional fields: left out when unknown
-            if f.get(key) is not None:
-                item[key] = f[key]
-        txy = f.get("target_xy")                                # only when a list of 2 numbers
-        if (isinstance(txy, list) and len(txy) == 2
-                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in txy)):
-            item["target_xy"] = txy
-        out.append(item)
-    return {"frames": out, "mock": mock}
+    # 1f) Legacy MOCK mode (when MOCK!=0 and MOCK_LIVE!=1):
+    if is_mock() and os.environ.get("MOCK_LIVE") != "1":
+        mode = "mock"
+        key = (mode,) + cache_key(ra_v, dec_v, fov_v)
+        with _lock:
+            cached = _cache.get(key)
+            if cached and all((PNG_DIR / f["filename"]).exists() for f in cached):
+                return _format_frames_response(request, cached, mock=True, live=False)
+            mock_frames = make_mock_frames(ra_v, dec_v, file_stem(mode, key))
+            _cache[key] = mock_frames
+        return _format_frames_response(request, mock_frames, mock=True, live=False)
+
+    # 2) Live background job
+    now = time.time()
+    job_max_s = get_live_job_max_s()
+    max_jobs = get_live_max_jobs()
+
+    with _lock:
+        job = _jobs.get(l_key)
+        if job is not None:
+            state = job["state"]
+            if state == "fetching" and (now - job["started_at"] > job_max_s):
+                job["state"] = "error"
+                job["error"] = f"job exceeded maximum duration of {int(job_max_s)}s"
+                state = "error"
+
+            if state == "fetching":
+                elapsed = int(now - job["started_at"])
+                return JSONResponse(status_code=200, content={
+                    "status": "fetching",
+                    "message": job.get("message", FETCH_MESSAGE),
+                    "elapsed_seconds": elapsed,
+                    "progress": job.get("progress", {"done": 0, "total": 6}),
+                    "frames": [],
+                    "mock": False,
+                })
+            elif state == "done":
+                done_frames = job["frames"]
+                del _jobs[l_key]
+                return _format_frames_response(request, done_frames, mock=False, live=True)
+            elif state == "error":
+                err_msg = job.get("error", "unknown error")
+                del _jobs[l_key]
+                return _error(err_msg)
+
+        # Check concurrency for new job
+        active_jobs = [
+            j for j in _jobs.values()
+            if j["state"] == "fetching" and (now - j["started_at"] <= job_max_s)
+        ]
+
+        if len(active_jobs) >= max_jobs:
+            oldest = min(active_jobs, key=lambda j: j["started_at"])
+            elapsed = now - oldest["started_at"]
+            retry_after = max(1, int(job_max_s - elapsed))
+            return JSONResponse(
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+                content={"error": "busy", "retry_after": retry_after},
+            )
+
+        # Start new job
+        job = {
+            "key": l_key,
+            "state": "fetching",
+            "started_at": now,
+            "progress": {"done": 0, "total": 6},
+            "message": FETCH_MESSAGE,
+            "frames": [],
+            "error": None,
+        }
+        t = threading.Thread(
+            target=_run_live_job,
+            args=(l_key, ra_v, dec_v, fov_v, stem),
+            daemon=True,
+        )
+        job["thread"] = t
+        _jobs[l_key] = job
+        t.start()
+
+        return JSONResponse(status_code=200, content={
+            "status": "fetching",
+            "message": FETCH_MESSAGE,
+            "elapsed_seconds": 0,
+            "progress": {"done": 0, "total": 6},
+            "frames": [],
+            "mock": False,
+        })

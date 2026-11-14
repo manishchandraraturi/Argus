@@ -61,29 +61,25 @@ def array_to_png(data, png_path, size=600, stretch="asinh"):
 
 
 def _pick_image_hdu(hdul):
-    """Print every extension, then choose: the one named IMAGE, else the first 2D image."""
-    print("FITS extensions:")
-    for i, hdu in enumerate(hdul):
-        shape = None if hdu.data is None else tuple(np.shape(hdu.data))
-        print(f"  [{i}] name={hdu.name!r:12} type={type(hdu).__name__:12} shape={shape}")
-
+    """Choose: the extension named IMAGE, else the first 2D image."""
     for hdu in hdul:                                   # preferred: extension called IMAGE
         if str(hdu.name).upper() == "IMAGE" and hdu.data is not None and np.squeeze(hdu.data).ndim == 2:
-            print(f"-> using extension named IMAGE")
             return hdu
     for i, hdu in enumerate(hdul):                     # fallback: first 2D image
         if hdu.data is not None and np.squeeze(hdu.data).ndim == 2:
-            print(f"-> no IMAGE extension, using first 2D image: [{i}] {hdu.name!r}")
             return hdu
     raise ValueError("no 2D image found in this FITS file")
 
 
 def fits_to_png(fits_path, png_path, size=600):
+    import warnings
     from astropy.io import fits    # imported here so array_to_png() can be tested without astropy
 
-    with fits.open(fits_path) as hdul:
-        hdu = _pick_image_hdu(hdul)
-        data = np.squeeze(np.array(hdu.data, dtype=np.float64))   # copy out of the file before it closes
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with fits.open(fits_path) as hdul:
+            hdu = _pick_image_hdu(hdul)
+            data = np.squeeze(np.array(hdu.data, dtype=np.float64))   # copy out of the file before it closes
     return array_to_png(data, png_path, size=size, stretch="asinh")
 
 
