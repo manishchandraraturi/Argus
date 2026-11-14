@@ -88,9 +88,9 @@ def get_live_max_jobs():
 
 def get_live_job_max_s():
     try:
-        return float(os.environ.get("LIVE_JOB_MAX_S", "300"))
+        return float(os.environ.get("LIVE_JOB_MAX_S", "120"))
     except (ValueError, TypeError):
-        return 300.0
+        return 120.0
 
 
 def cache_key(ra, dec, fov):

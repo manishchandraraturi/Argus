@@ -218,13 +218,21 @@ body.screen-viewer [role="button"] {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 1.5px;
-  padding: 3px 10px;
+  line-height: 1.3;
+  padding: 5px 12px;
   border-radius: 2px;
   z-index: 5;
   pointer-events: none;
   display: flex;
   align-items: center;
   gap: 6px;
+  box-sizing: border-box;
+}
+
+#stage-source-text {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.3;
 }
 
 .stage-source-badge.simulated {
@@ -249,7 +257,8 @@ body.screen-viewer [role="button"] {
 }
 
 .tag-not-aligned {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 1px;
@@ -259,7 +268,7 @@ body.screen-viewer [role="button"] {
   background: rgba(232, 163, 23, 0.25);
   border: 1px solid var(--color-amber);
   color: var(--color-amber);
-  vertical-align: middle;
+  line-height: 1.2;
 }
 
 .stage-badge-dot {
@@ -408,6 +417,10 @@ body.screen-viewer [role="button"] {
   gap: 16px;
   z-index: 10;
   transition: opacity 300ms ease;
+  box-sizing: border-box;
+  padding: 24px;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .viewer-spinner {
@@ -417,6 +430,7 @@ body.screen-viewer [role="button"] {
   border-top-color: var(--color-amber);
   border-radius: 50%;
   animation: spin 800ms linear infinite;
+  flex-shrink: 0;
 }
 
 @keyframes spin {
@@ -428,6 +442,15 @@ body.screen-viewer [role="button"] {
   font-size: 14px;
   color: var(--color-amber);
   letter-spacing: 1.5px;
+  text-align: center;
+  max-width: 90%;
+  width: 100%;
+  box-sizing: border-box;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.5;
 }
 
 .viewer-progress-bar {
@@ -455,6 +478,11 @@ body.screen-viewer [role="button"] {
   color: #38bdf8;
   text-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
   margin-top: 4px;
+  text-align: center;
+  max-width: 90%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
 }
 
 /* Live NASA Data Fetch Info (Elapsed Timer & Cancel Button) */
@@ -555,6 +583,57 @@ body.screen-viewer [role="button"] {
   flex-direction: column;
   gap: 14px;
   user-select: none;
+}
+
+/* Live Fetch Waiting Placeholder on Right Control Card */
+.viewer-control-card.is-waiting .viewer-mode-selector,
+.viewer-control-card.is-waiting .viewer-mode-panel {
+  display: none !important;
+}
+
+.viewer-waiting-card {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 16px;
+  text-align: center;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed rgba(232, 163, 23, 0.35);
+  margin-top: 10px;
+  border-radius: 4px;
+}
+
+.viewer-control-card.is-waiting .viewer-waiting-card {
+  display: flex !important;
+}
+
+.viewer-waiting-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(232, 163, 23, 0.2);
+  border-top-color: var(--color-amber);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+.viewer-waiting-title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--color-amber);
+}
+
+.viewer-waiting-desc {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: rgba(233, 238, 245, 0.65);
+  line-height: 1.5;
+  letter-spacing: 0.5px;
+  max-width: 240px;
 }
 
 /* Target Info Header */

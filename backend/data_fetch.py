@@ -26,7 +26,7 @@ last_timings = {}
 
 TAP_URL = "https://irsa.ipac.caltech.edu/TAP"
 BASE_URL = "https://irsa.ipac.caltech.edu/"
-TIMEOUT = 60
+TIMEOUT = 20
 WAVE_WINDOW_UM = 0.2  # keep frames whose true wavelengths fit inside this window
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
@@ -64,8 +64,10 @@ def _query_rows(ra, dec):
     try:
         service = pyvo.dal.TAPService(TAP_URL)
         table = service.run_sync(query, timeout=TIMEOUT).to_table()
+    except DataFetchError:
+        raise
     except Exception as err:
-        raise DataFetchError(f"IRSA query failed: {err}")
+        raise DataFetchError("NASA servers are currently too slow or unavailable.") from err
 
     rows = []
     for r in table:
@@ -453,7 +455,7 @@ def fetch_cutouts(
 
                 slot_held = True
                 try:
-                    req_timeout = min(60.0, max(1.0, deadline_ts - time.time()))
+                    req_timeout = min(20.0, max(1.0, deadline_ts - time.time()))
                     try:
                         resp = requests.get(url, timeout=req_timeout)
                     except requests.RequestException as e:

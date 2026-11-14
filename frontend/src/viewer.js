@@ -339,7 +339,7 @@ export function initViewer(sky) {
       </div>
 
       <!-- Right Control Card (340px) -->
-      <div class="viewer-control-card">
+      <div class="viewer-control-card" id="viewer-control-card">
         <span class="corner-tick tl"></span>
         <span class="corner-tick tr"></span>
         <span class="corner-tick bl"></span>
@@ -361,6 +361,13 @@ export function initViewer(sky) {
               <span class="viewer-coord-val" id="info-val-dec">-07° 14' 42.5" (-7.245°)</span>
             </div>
           </div>
+        </div>
+
+        <!-- Live Fetch Waiting Placeholder -->
+        <div class="viewer-waiting-card" id="viewer-waiting-card">
+          <div class="viewer-waiting-spinner"></div>
+          <div class="viewer-waiting-title">WAITING FOR DATA</div>
+          <div class="viewer-waiting-desc">Timeline and playback controls will activate once survey frames arrive.</div>
         </div>
 
         <!-- Mode Toggle (44px target) -->
@@ -535,6 +542,19 @@ export function initViewer(sky) {
   const infoValRa            = document.getElementById('info-val-ra');
   const infoValDec           = document.getElementById('info-val-dec');
 
+  const viewerControlCard    = document.getElementById('viewer-control-card');
+  const viewerWaitingCard    = document.getElementById('viewer-waiting-card');
+
+  function setRightPanelWaiting(isWaiting) {
+    if (viewerControlCard) {
+      if (isWaiting) {
+        viewerControlCard.classList.add('is-waiting');
+      } else {
+        viewerControlCard.classList.remove('is-waiting');
+      }
+    }
+  }
+
   const btnModePlay          = document.getElementById('btn-mode-play');
   const btnModeBlink         = document.getElementById('btn-mode-blink');
   const btnModeDiff          = document.getElementById('btn-mode-diff');
@@ -637,6 +657,7 @@ export function initViewer(sky) {
       activeAbortController = null;
     }
     stopElapsedCounter();
+    setRightPanelWaiting(false);
     loadingOverlay.style.display = 'none';
     errorOverlay.style.display = 'none';
 
@@ -948,6 +969,7 @@ export function initViewer(sky) {
     });
 
     state.frames = rawFrames;
+    state.loadedTargetName = state.name;
     previousLoadedFov = state.fov;
 
     const totalFrames = state.frames.length;
@@ -963,6 +985,7 @@ export function initViewer(sky) {
     }
 
     stopElapsedCounter();
+    setRightPanelWaiting(false);
     loadingOverlay.style.display = 'none';
     errorOverlay.style.display = 'none';
 
@@ -1069,6 +1092,7 @@ export function initViewer(sky) {
     // Force simulated frames preview directly
     if (options.forceSimulated) {
       stopElapsedCounter();
+      setRightPanelWaiting(false);
       loadingOverlay.style.display = 'none';
       errorOverlay.style.display = 'none';
       const sim = await generateSimFrames(effectiveRa, effectiveDec, fovNum, state.name);
@@ -1079,6 +1103,7 @@ export function initViewer(sky) {
     // Preloaded result supplied directly from HUD load button or external caller
     if (options.preloadedResult) {
       stopElapsedCounter();
+      setRightPanelWaiting(false);
       loadingOverlay.style.display = 'none';
       errorOverlay.style.display = 'none';
       await processLoadedFrames(options.preloadedResult, cacheKey);
@@ -1102,8 +1127,10 @@ export function initViewer(sky) {
 
     loadingOverlay.style.display = 'flex';
     errorOverlay.style.display = 'none';
+    if (expectedPositionMarker) expectedPositionMarker.style.display = 'none';
 
     if (isLive) {
+      setRightPanelWaiting(true);
       scanText.textContent = 'FETCHING REAL DATA... this can take several minutes';
       if (progressBar) progressBar.style.display = 'none';
       if (liveFetchInfo) liveFetchInfo.style.display = 'flex';
@@ -1113,6 +1140,7 @@ export function initViewer(sky) {
       }
       startElapsedCounter();
     } else {
+      setRightPanelWaiting(false);
       scanText.textContent = 'SCANNING 9 FRAMES... 0/9';
       if (progressFill) progressFill.style.width = '0%';
       if (progressBar) progressBar.style.display = 'block';
@@ -1139,6 +1167,7 @@ export function initViewer(sky) {
         name: effectiveName,
         signal,
         onStatus: (d) => {
+          setRightPanelWaiting(true);
           const serverMsg = d?.message || 'FETCHING REAL DATA... this can take several minutes';
           scanText.textContent = serverMsg;
           if (d?.progress && typeof d.progress.done === 'number' && typeof d.progress.total === 'number') {
@@ -1165,6 +1194,7 @@ export function initViewer(sky) {
         },
         onProgress: (info, total) => {
           if (info && (info.status === 'fetching' || typeof info === 'object')) {
+            setRightPanelWaiting(true);
             const serverMsg = info.message || 'FETCHING REAL DATA... this can take several minutes';
             scanText.textContent = serverMsg;
             if (info?.progress && typeof info.progress.done === 'number' && typeof info.progress.total === 'number') {
@@ -1205,6 +1235,7 @@ export function initViewer(sky) {
     } catch (err) {
       if (timeoutId) clearTimeout(timeoutId);
       stopElapsedCounter();
+      setRightPanelWaiting(false);
       loadingOverlay.style.display = 'none';
 
       // 404 "not cached": show HUD dialog
@@ -1603,6 +1634,7 @@ export function initViewer(sky) {
       activeAbortController = null;
     }
     stopElapsedCounter();
+    setRightPanelWaiting(false);
     loadingOverlay.style.display = 'none';
     errorOverlay.style.display = 'none';
     if (playbackTimer) clearTimeout(playbackTimer);
@@ -1616,6 +1648,10 @@ export function initViewer(sky) {
   }
 
   function goBackToProbeMenu() {
+    stopElapsedCounter();
+    setRightPanelWaiting(false);
+    loadingOverlay.style.display = 'none';
+    errorOverlay.style.display = 'none';
     if (playbackTimer) clearTimeout(playbackTimer);
     if (typeof window.setScreen === 'function') {
       window.setScreen('probe');
@@ -1813,6 +1849,7 @@ export function initViewer(sky) {
     getPan: () => [state.panX, state.panY],
     getCaptionText: () => understageCaption?.textContent || '',
     getExpectedPositionVisible: () => expectedPositionMarker?.style.display !== 'none',
+    isWaitingForData: () => viewerControlCard?.classList.contains('is-waiting') || false,
     setZoom: (z) => setZoom(z),
     setPairMode: (m) => applyPairMode(m),
     toggleExpectedPosition: () => btnToggleExpected?.click(),
