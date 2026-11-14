@@ -82,5 +82,5 @@ For each of the 5 targets (**Barnard's Star**, **WISE 0855**, **EPSILON INDI B**
      - **Epsilon Indi B**: 10 frames
      - **RW Aurigae**: 12 frames
      - **R Draconis**: 12 frames
-   - [ ] The green ring labeled `EXPECTED POSITION (catalog proper motion)` shows for **Barnard's Star** and **WISE 0855** only (hidden for targets without predicted motion).
+   - [ ] The green ring labeled `EXPECTED POSITION (catalog proper motion)` shows on every target whose frames.json has target_xy (currently all 5).
    - [ ] Click **BLINK** mode: verify Blink alternates between frame A and frame B smoothly at the selected speed.

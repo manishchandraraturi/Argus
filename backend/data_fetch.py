@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -16,6 +17,10 @@ from astropy.time import Time
 from astropy.wcs import WCS
 
 astropy_log.setLevel("WARNING")  # hides the harmless SIP INFO message
+logger = logging.getLogger(__name__)
+
+# Module-level timing dictionary recording metrics of the most recent run
+last_timings = {}
 
 TAP_URL = "https://irsa.ipac.caltech.edu/TAP"
 BASE_URL = "https://irsa.ipac.caltech.edu/"
@@ -97,26 +102,89 @@ def _pick_candidates(rows, n):
     return _spread(best, n, key=lambda r: r["mjd"])
 
 
-def _download(job):
+def _download_single(job, no_cache=False):
     if os.environ.get("FORBID_IRSA") == "1":
         raise DataFetchError("IRSA disabled")
     url, path = job
-    if os.path.exists(path):
-        return True
+    url_tail = url.split("/")[-1]
+    start_ts = time.time()
+    t0 = time.perf_counter()
+
+    if os.path.exists(path) and not no_cache:
+        file_size = os.path.getsize(path)
+        end_ts = time.time()
+        elapsed = time.perf_counter() - t0
+        info = {
+            "url_tail": url_tail,
+            "start": start_ts,
+            "end": end_ts,
+            "bytes": file_size,
+            "retries": 0,
+            "duration": elapsed,
+            "success": True,
+            "cached": True,
+        }
+        logger.info(
+            "Download %s (cached): start=%.3f, end=%.3f, bytes=%d, retries=0, duration=%.3fs",
+            url_tail,
+            start_ts,
+            end_ts,
+            file_size,
+            elapsed,
+        )
+        return True, info
+
+    retries = 0
+    downloaded_bytes = 0
+    success = False
+    err_msg = None
     for attempt in range(4):
         try:
             resp = requests.get(url, timeout=TIMEOUT)
             if resp.status_code in (429, 500, 502, 503, 504):
+                retries += 1
                 time.sleep(3 * (attempt + 1))  # server busy: wait and retry
                 continue
             resp.raise_for_status()
+            downloaded_bytes = len(resp.content)
             with open(path + ".part", "wb") as f:
                 f.write(resp.content)
             os.replace(path + ".part", path)
-            return True
-        except requests.RequestException:
+            success = True
+            break
+        except requests.RequestException as e:
+            retries += 1
+            err_msg = str(e)
             time.sleep(3 * (attempt + 1))
-    return False
+
+    end_ts = time.time()
+    elapsed = time.perf_counter() - t0
+    info = {
+        "url_tail": url_tail,
+        "start": start_ts,
+        "end": end_ts,
+        "bytes": downloaded_bytes,
+        "retries": retries,
+        "duration": elapsed,
+        "success": success,
+        "cached": False,
+        "error": err_msg if not success else None,
+    }
+    logger.info(
+        "Download %s: start=%.3f, end=%.3f, bytes=%d, retries=%d, duration=%.3fs",
+        url_tail,
+        start_ts,
+        end_ts,
+        downloaded_bytes,
+        retries,
+        elapsed,
+    )
+    return success, info
+
+
+def _download(job):
+    good, _ = _download_single(job)
+    return good
 
 
 def _measure_wavelength(path):
@@ -152,7 +220,10 @@ def _select_similar_wavelength(items, max_frames):
     return _spread(best, max_frames, key=lambda i: i["date"])
 
 
-def fetch_cutouts(ra_deg, dec_deg, fov_deg, max_frames=12):
+def fetch_cutouts(ra_deg, dec_deg, fov_deg, max_frames=12, no_cache=False):
+    global last_timings
+    t_total_start = time.perf_counter()
+
     ra, dec, fov = float(ra_deg), float(dec_deg), float(fov_deg)
     if not (0 <= ra <= 360) or not (-90 <= dec <= 90) or fov <= 0:
         raise DataFetchError("Invalid RA, Dec or FOV")
@@ -160,23 +231,55 @@ def fetch_cutouts(ra_deg, dec_deg, fov_deg, max_frames=12):
     if os.environ.get("FORBID_IRSA") == "1":
         raise DataFetchError("IRSA disabled")
 
+    # Read LIVE_WORKERS env var at call time (default 1; keep sequential for now)
+    try:
+        live_workers = int(os.environ.get("LIVE_WORKERS", "1"))
+    except (ValueError, TypeError):
+        live_workers = 1
+
     os.makedirs(FITS_DIR, exist_ok=True)
     key = f"v2_{ra:.4f}_{dec:.4f}_{fov:.4f}_{max_frames}"
     cache_file = os.path.join(CACHE_DIR, f"query_{key}.json")
 
-    # Cache hit: reuse saved result if all its files still exist
-    if os.path.exists(cache_file):
+    # Cache hit: reuse saved result if all its files still exist (unless no_cache=True)
+    if not no_cache and os.path.exists(cache_file):
         try:
             with open(cache_file) as f:
                 cached = json.load(f)
             if all(os.path.exists(item["fits_path"]) for item in cached):
+                elapsed = time.perf_counter() - t_total_start
+                last_timings = {
+                    "search_time": 0.0,
+                    "selection_time": 0.0,
+                    "downloads": [],
+                    "total_download_time": 0.0,
+                    "total_time": elapsed,
+                    "frames_returned": len(cached),
+                    "errors": [],
+                }
                 return cached
         except Exception:
             pass
 
+    t_search_start = time.perf_counter()
     rows = _query_rows(ra, dec)
+    search_time = time.perf_counter() - t_search_start
+    logger.info("TAP search time: %.3fs", search_time)
+
+    t_sel_start = time.perf_counter()
     candidates = _pick_candidates(rows, max_frames * 2)
+    sel_time_pre = time.perf_counter() - t_sel_start
     if not candidates:
+        total_time = time.perf_counter() - t_total_start
+        last_timings = {
+            "search_time": search_time,
+            "selection_time": sel_time_pre,
+            "downloads": [],
+            "total_download_time": 0.0,
+            "total_time": total_time,
+            "frames_returned": 0,
+            "errors": [],
+        }
         return []
 
     items, jobs = [], []
@@ -193,17 +296,38 @@ def fetch_cutouts(ra_deg, dec_deg, fov_deg, max_frames=12):
             "flags": r["flags"],
         })
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        ok = list(pool.map(_download, jobs))
+    # Sequential downloads (workers stay 1 for now; parallel in next phase)
+    ok = []
+    download_infos = []
+    for job in jobs:
+        good, d_info = _download_single(job, no_cache=no_cache)
+        ok.append(good)
+        download_infos.append(d_info)
+
+    # Keep items and jobs matched if a download fails
     items = [item for item, good in zip(items, ok) if good]
     if not items:
+        total_time = time.perf_counter() - t_total_start
+        last_timings = {
+            "search_time": search_time,
+            "selection_time": sel_time_pre,
+            "downloads": download_infos,
+            "total_download_time": sum(d["duration"] for d in download_infos),
+            "total_time": total_time,
+            "frames_returned": 0,
+            "errors": ["IRSA cutout service is busy, try again later"],
+        }
         raise DataFetchError("IRSA cutout service is busy, try again later")
 
+    t_sel2_start = time.perf_counter()
     for item in items:
         item["wavelength_um"] = _measure_wavelength(item["fits_path"])
 
     results = _select_similar_wavelength(items, max_frames)
     results.sort(key=lambda item: item["date"])
+    sel_time_post = time.perf_counter() - t_sel2_start
+    selection_time = sel_time_pre + sel_time_post
+    logger.info("Frame selection time: %.3fs", selection_time)
 
     # Delete downloaded files we did not keep, to save disk space
     keep = {item["fits_path"] for item in results}
@@ -211,6 +335,21 @@ def fetch_cutouts(ra_deg, dec_deg, fov_deg, max_frames=12):
         if item["fits_path"] not in keep and os.path.exists(item["fits_path"]):
             os.remove(item["fits_path"])
 
-    with open(cache_file, "w") as f:
-        json.dump(results, f, indent=2)
+    if not no_cache:
+        with open(cache_file, "w") as f:
+            json.dump(results, f, indent=2)
+
+    total_time = time.perf_counter() - t_total_start
+    total_dl_time = sum(d["duration"] for d in download_infos)
+    logger.info("fetch_cutouts total time: %.3fs", total_time)
+
+    last_timings = {
+        "search_time": search_time,
+        "selection_time": selection_time,
+        "downloads": download_infos,
+        "total_download_time": total_dl_time,
+        "total_time": total_time,
+        "frames_returned": len(results),
+        "errors": [d["error"] for d in download_infos if d.get("error")],
+    }
     return results
