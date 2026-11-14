@@ -1,0 +1,58 @@
+[
+  {
+    "name": "Barnard's Star",
+    "simbad_id": "NAME Barnard's star",
+    "ra_deg": 269.452077,
+    "dec_deg": 4.693365,
+    "pmra_mas_per_yr": -801.551,
+    "pmdec_mas_per_yr": 10362.394,
+    "epoch": "J2000",
+    "source": "SIMBAD TAP table basic (pmra, pmdec); position and epoch from targets_verified.json",
+    "match_arcsec": 0.0
+  },
+  {
+    "name": "Epsilon Indi B",
+    "simbad_id": "* eps Ind B",
+    "ra_deg": 331.044147,
+    "dec_deg": -56.782844,
+    "pmra_mas_per_yr": 3981.977,
+    "pmdec_mas_per_yr": -2466.832,
+    "epoch": "J2000",
+    "source": "SIMBAD TAP table basic (pmra, pmdec); position and epoch from targets_verified.json",
+    "match_arcsec": 0.0
+  },
+  {
+    "name": "RW Aurigae",
+    "simbad_id": "V* RW Aur A",
+    "ra_deg": 76.956067,
+    "dec_deg": 30.401326,
+    "pmra_mas_per_yr": 2.641,
+    "pmdec_mas_per_yr": -27.398,
+    "epoch": "J2000",
+    "source": "SIMBAD TAP table basic (pmra, pmdec); position and epoch from targets_verified.json",
+    "match_arcsec": 0.0
+  },
+  {
+    "name": "R Draconis",
+    "simbad_id": "V* R Dra",
+    "ra_deg": 248.167611,
+    "dec_deg": 66.754979,
+    "pmra_mas_per_yr": -20.643,
+    "pmdec_mas_per_yr": 6.149,
+    "epoch": "J2000",
+    "source": "SIMBAD TAP table basic (pmra, pmdec); position and epoch from targets_verified.json",
+    "match_arcsec": 0.0
+  },
+  {
+    "name": "WISE 0855",
+    "simbad_id": "WISE J085510.83-071442.5",
+    "ra_deg": 133.7819058,
+    "dec_deg": -7.2440115,
+    "epoch": "MJD 57474.62 (HST astrometry)",
+    "epoch_mjd": 57474.62,
+    "pmra_mas_per_yr": -8118.0,
+    "pmdec_mas_per_yr": 680.0,
+    "source": "Luhman & Esplin 2016, arXiv:1605.06655: position from Table 2 (MJD 57474.62), proper motion from Table 4",
+    "match_arcsec": null
+  }
+]

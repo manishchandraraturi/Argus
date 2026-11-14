@@ -1,0 +1,6 @@
+Cache-only check of backend/demo_cache (no network).
+Barnard's Star (FOV 0.20, folder 269.452_4.693_0.20): 10 frames, 2025-08-25 to 2026-09-22, detectors [2], wavelength 1.4566-1.6476 um (spread 0.191), problems: none
+WISE 0855 (FOV 0.20, folder 133.795_-7.245_0.20): 11 frames, 2025-05-06 to 2026-05-11, detectors [5], wavelength 4.0314-4.2158 um (spread 0.184), problems: none
+Epsilon Indi B (FOV 0.15, folder 331.044_-56.783_0.15): 10 frames, 2025-04-29 to 2026-09-27, detectors [3], wavelength 1.6361-1.795 um (spread 0.159), problems: none
+RW Aurigae (FOV 0.20, folder 76.956_30.401_0.20): 12 frames, 2025-09-02 to 2026-09-09, detectors [1], wavelength 0.7742-0.9647 um (spread 0.191), problems: none
+R Draconis (FOV 0.20, folder 248.168_66.755_0.20): 12 frames, 2025-06-06 to 2026-09-16, detectors [1], wavelength 0.8051-1.0047 um (spread 0.2), problems: none

@@ -1,0 +1,90 @@
+{
+  "frames": [
+    {
+      "date": "2025-06-06",
+      "filename": "248.168_66.755_0.20_00.png",
+      "detector": 1,
+      "wavelength_um": 0.9416,
+      "flags": ""
+    },
+    {
+      "date": "2025-09-06",
+      "filename": "248.168_66.755_0.20_01.png",
+      "detector": 1,
+      "wavelength_um": 0.988,
+      "flags": ""
+    },
+    {
+      "date": "2025-11-05",
+      "filename": "248.168_66.755_0.20_02.png",
+      "detector": 1,
+      "wavelength_um": 0.9315,
+      "flags": ""
+    },
+    {
+      "date": "2026-07-08",
+      "filename": "248.168_66.755_0.20_03.png",
+      "detector": 1,
+      "wavelength_um": 0.9834,
+      "flags": ""
+    },
+    {
+      "date": "2026-07-31",
+      "filename": "248.168_66.755_0.20_04.png",
+      "detector": 1,
+      "wavelength_um": 0.8051,
+      "flags": ""
+    },
+    {
+      "date": "2026-08-10",
+      "filename": "248.168_66.755_0.20_05.png",
+      "detector": 1,
+      "wavelength_um": 1.0047,
+      "flags": ""
+    },
+    {
+      "date": "2026-08-15",
+      "filename": "248.168_66.755_0.20_06.png",
+      "detector": 1,
+      "wavelength_um": 0.8467,
+      "flags": ""
+    },
+    {
+      "date": "2026-08-27",
+      "filename": "248.168_66.755_0.20_07.png",
+      "detector": 1,
+      "wavelength_um": 0.9806,
+      "flags": ""
+    },
+    {
+      "date": "2026-08-30",
+      "filename": "248.168_66.755_0.20_08.png",
+      "detector": 1,
+      "wavelength_um": 0.8654,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-02",
+      "filename": "248.168_66.755_0.20_09.png",
+      "detector": 1,
+      "wavelength_um": 0.8394,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-11",
+      "filename": "248.168_66.755_0.20_10.png",
+      "detector": 1,
+      "wavelength_um": 0.9267,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-16",
+      "filename": "248.168_66.755_0.20_11.png",
+      "detector": 1,
+      "wavelength_um": 0.9164,
+      "flags": ""
+    }
+  ],
+  "mock": false,
+  "target": "R Draconis"
+}

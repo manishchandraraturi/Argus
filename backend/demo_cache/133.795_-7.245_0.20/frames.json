@@ -1,0 +1,83 @@
+{
+  "frames": [
+    {
+      "date": "2025-05-06",
+      "filename": "133.795_-7.245_0.20_00.png",
+      "detector": 5,
+      "wavelength_um": 4.032,
+      "flags": ""
+    },
+    {
+      "date": "2025-05-06",
+      "filename": "133.795_-7.245_0.20_01.png",
+      "detector": 5,
+      "wavelength_um": 4.1028,
+      "flags": ""
+    },
+    {
+      "date": "2025-11-07",
+      "filename": "133.795_-7.245_0.20_02.png",
+      "detector": 5,
+      "wavelength_um": 4.0672,
+      "flags": ""
+    },
+    {
+      "date": "2025-11-07",
+      "filename": "133.795_-7.245_0.20_03.png",
+      "detector": 5,
+      "wavelength_um": 4.1381,
+      "flags": ""
+    },
+    {
+      "date": "2025-11-07",
+      "filename": "133.795_-7.245_0.20_04.png",
+      "detector": 5,
+      "wavelength_um": 4.2105,
+      "flags": ""
+    },
+    {
+      "date": "2025-12-11",
+      "filename": "133.795_-7.245_0.20_05.png",
+      "detector": 5,
+      "wavelength_um": 4.0314,
+      "flags": ""
+    },
+    {
+      "date": "2025-12-12",
+      "filename": "133.795_-7.245_0.20_06.png",
+      "detector": 5,
+      "wavelength_um": 4.102,
+      "flags": ""
+    },
+    {
+      "date": "2025-12-13",
+      "filename": "133.795_-7.245_0.20_07.png",
+      "detector": 5,
+      "wavelength_um": 4.174,
+      "flags": ""
+    },
+    {
+      "date": "2026-05-02",
+      "filename": "133.795_-7.245_0.20_08.png",
+      "detector": 5,
+      "wavelength_um": 4.2158,
+      "flags": ""
+    },
+    {
+      "date": "2026-05-03",
+      "filename": "133.795_-7.245_0.20_09.png",
+      "detector": 5,
+      "wavelength_um": 4.1743,
+      "flags": ""
+    },
+    {
+      "date": "2026-05-11",
+      "filename": "133.795_-7.245_0.20_10.png",
+      "detector": 5,
+      "wavelength_um": 4.2157,
+      "flags": ""
+    }
+  ],
+  "mock": false,
+  "target": "WISE 0855"
+}

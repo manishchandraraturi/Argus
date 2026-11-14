@@ -1,0 +1,52 @@
+[
+  {
+    "name": "Barnard's Star",
+    "ra_deg": 269.452077,
+    "dec_deg": 4.693365,
+    "ra_hms": "17 57 48.49847",
+    "dec_dms": "+04 41 36.1139",
+    "epoch": "J2000 (ICRS)",
+    "source": "SIMBAD sim-id page for V* V2500 Oph / Barnard's star, ICRS ep=J2000 (Gaia DR3 based, bibcode 2020yCat.1350....0G)",
+    "verified_on_simbad_page": true
+  },
+  {
+    "name": "WISE 0855",
+    "ra_deg": 133.795132,
+    "dec_deg": -7.245146,
+    "ra_hms": "08 55 10.83168",
+    "dec_dms": "-07 14 42.5256",
+    "epoch": "J2000 (ICRS)",
+    "source": "Wikipedia infobox for WISE 0855-0714 (ICRS, ep=J2000), which cites SIMBAD. The SIMBAD page snippet that was retrieved had garbled coordinates, so please confirm on SIMBAD yourself (search: WISE J085510.83-071442.5)",
+    "verified_on_simbad_page": false
+  },
+  {
+    "name": "Epsilon Indi B",
+    "ra_deg": 331.044147,
+    "dec_deg": -56.782844,
+    "ra_hms": "22 04 10.5952",
+    "dec_dms": "-56 46 58.24",
+    "epoch": "J2000 (ICRS)",
+    "source": "JWST proposal 5765 target list, 'eps Ind B', coordinates retrieved from SIMBAD by the JWST target selector (J2000). Confirm on SIMBAD (search: eps Ind B)",
+    "verified_on_simbad_page": false
+  },
+  {
+    "name": "RW Aurigae",
+    "ra_deg": 76.956067,
+    "dec_deg": 30.401326,
+    "ra_hms": "05 07 49.4562",
+    "dec_dms": "+30 24 04.774",
+    "epoch": "J2000 (ICRS)",
+    "source": "Wikipedia infobox for RW Aurigae, component A (ICRS, ep=J2000), which cites SIMBAD. No SIMBAD page was retrieved, so please confirm on SIMBAD (search: RW Aur)",
+    "verified_on_simbad_page": false
+  },
+  {
+    "name": "R Draconis",
+    "ra_deg": 248.167611,
+    "dec_deg": 66.754979,
+    "ra_hms": "16 32 40.2266",
+    "dec_dms": "+66 45 17.9259",
+    "epoch": "J2000 (ICRS)",
+    "source": "SIMBAD (V* R Dra, Basic data page, ICRS coord. ep=J2000, bibcode 2020yCat.1350....0G)",
+    "verified_on_simbad_page": true
+  }
+]

@@ -1,0 +1,90 @@
+{
+  "frames": [
+    {
+      "date": "2025-09-02",
+      "filename": "76.956_30.401_0.20_00.png",
+      "detector": 1,
+      "wavelength_um": 0.7806,
+      "flags": ""
+    },
+    {
+      "date": "2025-09-02",
+      "filename": "76.956_30.401_0.20_01.png",
+      "detector": 1,
+      "wavelength_um": 0.8187,
+      "flags": ""
+    },
+    {
+      "date": "2025-09-03",
+      "filename": "76.956_30.401_0.20_02.png",
+      "detector": 1,
+      "wavelength_um": 0.8782,
+      "flags": ""
+    },
+    {
+      "date": "2025-09-04",
+      "filename": "76.956_30.401_0.20_03.png",
+      "detector": 1,
+      "wavelength_um": 0.9427,
+      "flags": ""
+    },
+    {
+      "date": "2026-03-04",
+      "filename": "76.956_30.401_0.20_04.png",
+      "detector": 1,
+      "wavelength_um": 0.8573,
+      "flags": ""
+    },
+    {
+      "date": "2026-03-04",
+      "filename": "76.956_30.401_0.20_05.png",
+      "detector": 1,
+      "wavelength_um": 0.9203,
+      "flags": ""
+    },
+    {
+      "date": "2026-03-06",
+      "filename": "76.956_30.401_0.20_06.png",
+      "detector": 1,
+      "wavelength_um": 0.9647,
+      "flags": ""
+    },
+    {
+      "date": "2026-03-10",
+      "filename": "76.956_30.401_0.20_07.png",
+      "detector": 1,
+      "wavelength_um": 0.7742,
+      "flags": ""
+    },
+    {
+      "date": "2026-03-10",
+      "filename": "76.956_30.401_0.20_08.png",
+      "detector": 1,
+      "wavelength_um": 0.8313,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-08",
+      "filename": "76.956_30.401_0.20_09.png",
+      "detector": 1,
+      "wavelength_um": 0.8263,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-08",
+      "filename": "76.956_30.401_0.20_10.png",
+      "detector": 1,
+      "wavelength_um": 0.8659,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-09",
+      "filename": "76.956_30.401_0.20_11.png",
+      "detector": 1,
+      "wavelength_um": 0.9293,
+      "flags": ""
+    }
+  ],
+  "mock": false,
+  "target": "RW Aurigae"
+}

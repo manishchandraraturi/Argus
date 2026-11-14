@@ -1,0 +1,100 @@
+measure_checks.py - read-only measurements on the local frames
+backend folder: C:\Users\shree\Documents\planet-x-sphere-x\backend
+
+==============================================================================
+PART A - Barnard's Star, frames 0 and 9 (predicted vs measured shift)
+==============================================================================
+note: demo_cache_aligned frames.json has no fits_path, so the FITS
+      paths come from cache/query_v2_*.json (the same files the
+      aligned cache was built from).
+
+frames 0 (2025-08-25) and 9 (2026-09-22), FOV 0.20 deg, 1.20 arcsec per pixel
+PREDICTED from target_xy: [316.6, 78.0] -> [317.3, 68.7]
+  dx +0.70 px (x right = west), dy -9.30 px (y down = south)
+  length 9.33 px = 11.19 arcsec, direction N (355.7 deg from north towards east)
+MEASURED from the difference image (sigma 0.03115, threshold 5 sigma = 0.1558):
+  window: pixels within 25 px of the midpoint (317.0, 73.3)
+  positive lobe 775 px, negative lobe 803 px, non-finite pixels inside the window 371
+  positive centroid (313.62, 64.16), negative centroid (313.90, 81.74)
+  dx -0.27 px, dy -17.57 px, length 17.58 px = 21.09 arcsec, direction N (0.9 deg)
+(measured - predicted) = (-0.97, -8.27) px, length 8.33 px
+direction difference 5.2 deg
+NO MATCH
+  rule: length < 0.5 px (8.33) and direction difference < 20 deg (5.2)
+
+==============================================================================
+PART B - leftover metric and blank holes, all 5 targets
+==============================================================================
+[Barnard's Star] FOV 0.20, pair 0/9 (2025-08-25 vs 2026-09-22, 10 frames)
+  leftover: original 1.248, aligned 1.062, ratio 0.851
+  raw FITS blanks: frame 0 5 px in 1 blob(s) >=2 px, frame 9 4 px in 1 blob(s) >=2 px
+  aligned blanks in rows/cols 100..499: frame 0 0 px, 0 blob(s) >=25 px []
+                                        frame 9 0 px, 0 blob(s) >=25 px []
+  cleaner NO, blanked_core NO, blanks_from none
+
+  saved C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_Barnards_Star.png (shared scale 11.34, mid-grey = 0)
+
+[WISE 0855] FOV 0.20, pair 1/6 (2025-05-06 vs 2025-12-12, 11 frames)
+  leftover: original 1.987, aligned 1.972, ratio 0.992
+  raw FITS blanks: frame 1 9 px in 0 blob(s) >=2 px, frame 6 5 px in 0 blob(s) >=2 px
+  aligned blanks in rows/cols 100..499: frame 1 486 px, 5 blob(s) >=25 px [(106, 248.2, 491.3), (104, 238.1, 462.1), (104, 70.3, 415.7), (69, 396.3, 392.4), (103, 157.9, 278.2)]
+                                        frame 6 211 px, 2 blob(s) >=25 px [(104, 180.6, 366.3), (107, 386.9, 336.4)]
+  cleaner NO, blanked_core YES, blanks_from raw
+
+  saved C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_WISE_0855.png (shared scale 14.87, mid-grey = 0)
+
+[Epsilon Indi B] FOV 0.15, pair 1/9 (2025-04-29 vs 2026-09-27, 10 frames)
+  leftover: original 2.005, aligned 1.408, ratio 0.702
+  raw FITS blanks: frame 1 0 px in 0 blob(s) >=2 px, frame 9 0 px in 0 blob(s) >=2 px
+  aligned blanks in rows/cols 100..499: frame 1 0 px, 0 blob(s) >=25 px []
+                                        frame 9 0 px, 0 blob(s) >=25 px []
+  cleaner YES, blanked_core NO, blanks_from none
+
+  saved C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_Epsilon_Indi_B.png (shared scale 22.22, mid-grey = 0)
+
+[RW Aurigae] FOV 0.20, pair 1/9 (2025-09-02 vs 2026-09-08, 12 frames)
+  leftover: original 1.193, aligned 0.518, ratio 0.435
+  raw FITS blanks: frame 1 0 px in 0 blob(s) >=2 px, frame 9 0 px in 0 blob(s) >=2 px
+  aligned blanks in rows/cols 100..499: frame 1 0 px, 0 blob(s) >=25 px []
+                                        frame 9 0 px, 0 blob(s) >=25 px []
+  cleaner YES, blanked_core NO, blanks_from none
+
+  saved C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_RW_Aurigae.png (shared scale 7.711, mid-grey = 0)
+
+[R Draconis] FOV 0.20, pair 0/11 (2025-06-06 vs 2026-09-16, 12 frames)
+  leftover: original 1.431, aligned 1.220, ratio 0.852
+  raw FITS blanks: frame 0 15 px in 1 blob(s) >=2 px, frame 11 8 px in 1 blob(s) >=2 px
+  aligned blanks in rows/cols 100..499: frame 0 605 px, 1 blob(s) >=25 px [(605, 200.7, 398.6)]
+                                        frame 11 367 px, 1 blob(s) >=25 px [(367, 199.2, 401.0)]
+  cleaner NO, blanked_core YES, blanks_from raw
+
+  saved C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_R_Draconis.png (shared scale 22.85, mid-grey = 0)
+
+==============================================================================
+SUMMARY
+==============================================================================
+target             | original | aligned | ratio | cleaner | blanked_core | blanks_from
+--------------------------------------------------------------------------------------
+Barnard's Star     |    1.248 |   1.062 | 0.851 | NO      | NO           | none
+WISE 0855          |    1.987 |   1.972 | 0.992 | NO      | YES          | raw
+Epsilon Indi B     |    2.005 |   1.408 | 0.702 | YES     | NO           | none
+RW Aurigae         |    1.193 |   0.518 | 0.435 | YES     | NO           | none
+R Draconis         |    1.431 |   1.220 | 0.852 | NO      | YES          | raw
+
+SUGGESTED USE_ALIGNED (aligned only when cleaner YES and blanked_core NO):
+USE_ALIGNED = {
+    "Barnard's Star": False,
+    "WISE 0855": False,
+    "Epsilon Indi B": True,
+    "RW Aurigae": True,
+    "R Draconis": False,
+}
+
+side-by-side images:
+  C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_Barnards_Star.png
+  C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_WISE_0855.png
+  C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_Epsilon_Indi_B.png
+  C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_RW_Aurigae.png
+  C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\out\sidebyside_R_Draconis.png
+
+results written to C:\Users\shree\Documents\planet-x-sphere-x\backend\tools\measure_results.txt

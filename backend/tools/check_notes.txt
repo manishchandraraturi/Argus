@@ -1,0 +1,19 @@
+Known defect: Barnard's Star frame 02 (2025-08-27)
+=================================================
+
+Barnard's Star frame 02 (2025-08-27) is a bad source cutout (117x84; star window
+100% empty; footprint 71% of the 600x600 grid).
+
+Present in cache/, demo_cache and demo_cache_aligned; the build did not cause it.
+
+target_xy is removed for this frame in demo_cache_final, so no marker points into
+empty space. The frame, its PNG, its filename and its date are all kept.
+
+Checker: FAIL on NaN holes >= 25 px inside covered data, FAIL if a frame has
+target_xy but no coverage, WARN otherwise. Exit 0 with warnings.
+
+TODO (needs network): make data_fetch.py reject non-square or off-target cutouts,
+then re-download this frame.
+
+TODO: decide with Manish whether to keep or drop frame 02 (frames 0, 1, 2 are
+within 2 days, so dropping loses no science).

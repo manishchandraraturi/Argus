@@ -1,0 +1,76 @@
+{
+  "frames": [
+    {
+      "date": "2025-04-29",
+      "filename": "331.044_-56.783_0.15_00.png",
+      "detector": 3,
+      "wavelength_um": 1.6361,
+      "flags": ""
+    },
+    {
+      "date": "2025-04-29",
+      "filename": "331.044_-56.783_0.15_01.png",
+      "detector": 3,
+      "wavelength_um": 1.795,
+      "flags": ""
+    },
+    {
+      "date": "2025-05-01",
+      "filename": "331.044_-56.783_0.15_02.png",
+      "detector": 3,
+      "wavelength_um": 1.7135,
+      "flags": ""
+    },
+    {
+      "date": "2025-05-07",
+      "filename": "331.044_-56.783_0.15_03.png",
+      "detector": 3,
+      "wavelength_um": 1.6743,
+      "flags": ""
+    },
+    {
+      "date": "2025-09-29",
+      "filename": "331.044_-56.783_0.15_04.png",
+      "detector": 3,
+      "wavelength_um": 1.7835,
+      "flags": ""
+    },
+    {
+      "date": "2025-11-03",
+      "filename": "331.044_-56.783_0.15_05.png",
+      "detector": 3,
+      "wavelength_um": 1.7833,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-22",
+      "filename": "331.044_-56.783_0.15_06.png",
+      "detector": 3,
+      "wavelength_um": 1.7941,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-27",
+      "filename": "331.044_-56.783_0.15_07.png",
+      "detector": 3,
+      "wavelength_um": 1.6933,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-27",
+      "filename": "331.044_-56.783_0.15_08.png",
+      "detector": 3,
+      "wavelength_um": 1.7272,
+      "flags": ""
+    },
+    {
+      "date": "2026-09-27",
+      "filename": "331.044_-56.783_0.15_09.png",
+      "detector": 3,
+      "wavelength_um": 1.7676,
+      "flags": ""
+    }
+  ],
+  "mock": false,
+  "target": "Epsilon Indi B"
+}

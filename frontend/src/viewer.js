@@ -1,0 +1,1620 @@
+import { getFrames, API_BASE, getSelectedTarget, setSelectedTarget } from './api.js';
+import { generateSimFrames } from './simFrames.js';
+import { TARGETS, getDefaultPairForTarget, getCaptionForTarget, getTargetInfo, isCachedDemoTarget } from './targets.js';
+
+// ─── Coordinate Formatting Utilities ──────────────────────────────────────────
+export function formatRA(raDeg) {
+  const norm = ((raDeg % 360) + 360) % 360;
+  const totalHours = norm / 15;
+  const h = Math.floor(totalHours);
+  const m = Math.floor((totalHours - h) * 60);
+  const s = ((totalHours - h) * 60 - m) * 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  const hms = `${pad(h)}h ${pad(m)}m ${s.toFixed(1).padStart(4, '0')}s`;
+  return `${hms} (${norm.toFixed(3)}°)`;
+}
+
+export function formatDec(decDeg) {
+  const sign = decDeg >= 0 ? '+' : '-';
+  const abs = Math.abs(decDeg);
+  const d = Math.floor(abs);
+  const m = Math.floor((abs - d) * 60);
+  const s = ((abs - d) * 60 - m) * 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  const dms = `${sign}${pad(d)}° ${pad(m)}' ${s.toFixed(1).padStart(4, '0')}"`;
+  return `${dms} (${decDeg.toFixed(3)}°)`;
+}
+
+// ─── Difference Image & Client-side Candidate Finder ─────────────────────────
+export function computeDifference(imageDataA, imageDataB, gain = 2.0) {
+  const W = 600;
+  const H = 600;
+  const totalPixels = W * H;
+
+  const rawDiff = new Float32Array(totalPixels);
+  const diffCanvas = document.createElement('canvas');
+  diffCanvas.width = W;
+  diffCanvas.height = H;
+  const diffCtx = diffCanvas.getContext('2d');
+  const outImgData = diffCtx.createImageData(W, H);
+  const outData = outImgData.data;
+
+  const dataA = imageDataA.data;
+  const dataB = imageDataB.data;
+
+  for (let i = 0; i < totalPixels; i++) {
+    const p = i * 4;
+    // Luminance subtraction |B - A|
+    const diff = Math.abs(dataB[p] - dataA[p]);
+    rawDiff[i] = diff;
+    const amplified = Math.min(255, Math.round(diff * gain));
+    outData[p]     = amplified;
+    outData[p + 1] = amplified;
+    outData[p + 2] = amplified;
+    outData[p + 3] = 255;
+  }
+  diffCtx.putImageData(outImgData, 0, 0);
+
+  // 1. Separable 5x5 Gaussian/box blur
+  const blurred = new Float32Array(totalPixels);
+  const temp = new Float32Array(totalPixels);
+
+  for (let y = 0; y < H; y++) {
+    const row = y * W;
+    for (let x = 0; x < W; x++) {
+      let sum = 0, count = 0;
+      for (let dx = -2; dx <= 2; dx++) {
+        const nx = x + dx;
+        if (nx >= 0 && nx < W) {
+          sum += rawDiff[row + nx];
+          count++;
+        }
+      }
+      temp[row + x] = sum / count;
+    }
+  }
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let sum = 0, count = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        const ny = y + dy;
+        if (ny >= 0 && ny < H) {
+          sum += temp[ny * W + x];
+          count++;
+        }
+      }
+      blurred[y * W + x] = sum / count;
+    }
+  }
+
+  // 2. Mean and standard deviation (sigma)
+  let sum = 0;
+  for (let i = 0; i < totalPixels; i++) {
+    sum += blurred[i];
+  }
+  const mean = sum / totalPixels;
+
+  let varSum = 0;
+  for (let i = 0; i < totalPixels; i++) {
+    const d = blurred[i] - mean;
+    varSum += d * d;
+  }
+  const sigma = Math.sqrt(varSum / totalPixels);
+  const threshold = mean + 4.0 * Math.max(sigma, 0.5);
+
+  // 3. Find local maxima separated by at least 12px
+  const rawCandidates = [];
+  const margin = 15;
+
+  for (let y = margin; y < H - margin; y++) {
+    const row = y * W;
+    for (let x = margin; x < W - margin; x++) {
+      const val = blurred[row + x];
+      if (val <= threshold) continue;
+
+      let isLocalMax = true;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          if (blurred[(y + dy) * W + (x + dx)] > val) {
+            isLocalMax = false;
+            break;
+          }
+        }
+        if (!isLocalMax) break;
+      }
+
+      if (isLocalMax) {
+        rawCandidates.push({
+          x,
+          y,
+          value: val,
+          sigmaAbove: ((val - mean) / Math.max(sigma, 0.1)).toFixed(1),
+        });
+      }
+    }
+  }
+
+  // Sort descending by intensity
+  rawCandidates.sort((a, b) => b.value - a.value);
+
+  // Non-maximum suppression with 12px distance threshold (keep at most 5 strongest)
+  const candidates = [];
+  for (const cand of rawCandidates) {
+    const isClose = candidates.some(existing => {
+      return Math.hypot(cand.x - existing.x, cand.y - existing.y) < 12;
+    });
+    if (!isClose) {
+      candidates.push({
+        id: candidates.length + 1,
+        ...cand,
+      });
+      if (candidates.length >= 5) break;
+    }
+  }
+
+  // Compute test metrics: mean in star-free area vs at candidate mover
+  let starFreeSum = 0;
+  let starFreeCount = 0;
+  // Sample top-left corner area (10 to 60, 10 to 60)
+  for (let sy = 10; sy < 60; sy++) {
+    for (let sx = 10; sx < 60; sx++) {
+      starFreeSum += rawDiff[sy * W + sx];
+      starFreeCount++;
+    }
+  }
+  const starFreeMean = starFreeSum / Math.max(1, starFreeCount);
+
+  let moverMean = 0;
+  if (candidates.length > 0) {
+    const c = candidates[0];
+    let mSum = 0;
+    let mCount = 0;
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        mSum += rawDiff[(c.y + dy) * W + (c.x + dx)];
+        mCount++;
+      }
+    }
+    moverMean = mSum / Math.max(1, mCount);
+  }
+
+  return {
+    diffCanvas,
+    candidates,
+    mean,
+    sigma,
+    threshold,
+    metrics: {
+      starFreeMean: parseFloat(starFreeMean.toFixed(2)),
+      moverMean: parseFloat(moverMean.toFixed(2)),
+    },
+  };
+}
+
+// ─── Main Viewer Controller ───────────────────────────────────────────────────
+export function initViewer(sky) {
+  // Target cache to prevent redundant re-fetching
+  const frameCache = new Map();
+
+  // Internal viewer state
+  const state = {
+    ra: 133.795,
+    dec: -7.245,
+    fov: 0.20,
+    entryFov: 0.20,
+    name: 'WISE 0855',
+    frames: [],
+    source: 'simulated',
+    mock: true,
+    mode: 'PLAY', // 'PLAY' | 'BLINK' | 'DIFFERENCE'
+    currentFrameIndex: 0, // 0-based index
+    blinkFrameA: 0,
+    blinkFrameB: 8,
+    pairMode: 'best', // 'best' | 'firstlast'
+    zoomLevel: 1, // 1 | 2 | 4
+    panX: 0,
+    panY: 0,
+    showExpectedPosition: true,
+    diffGain: 2.0,
+    isPlaying: true,
+    speedMultiplier: 1.0, // 0.5x, 0.75x, 1x, 2x, 4x
+    isLooping: true,
+    preloadTimeMs: 0,
+    candidates: [],
+    diffResult: null,
+    avgFrameTimeMs: 400,
+  };
+
+  // Performance measurement state
+  let lastFrameTime = performance.now();
+  let frameTimeHistory = [];
+
+  // Create Viewer DOM Shell if not already present
+  let viewerRoot = document.getElementById('viewer-screen');
+  if (!viewerRoot) {
+    viewerRoot = document.createElement('div');
+    viewerRoot.id = 'viewer-screen';
+    document.body.appendChild(viewerRoot);
+  }
+
+  viewerRoot.innerHTML = `
+    <div class="viewer-layout">
+      <!-- Left/Center Stage Column -->
+      <div class="viewer-stage-column">
+        <div class="viewer-stage-frame" id="viewer-stage-frame">
+          <span class="corner-tick tl"></span>
+          <span class="corner-tick tr"></span>
+          <span class="corner-tick bl"></span>
+          <span class="corner-tick br"></span>
+
+          <!-- Viewport for Zoom & Pan -->
+          <div class="stage-viewport" id="stage-viewport">
+            <div class="stage-content" id="stage-content">
+              <!-- Canvas for Frame Display -->
+              <canvas class="viewer-canvas" id="viewer-display-canvas" width="600" height="600"></canvas>
+
+              <!-- Thin Center Crosshair -->
+              <div class="viewer-crosshair-center"></div>
+
+              <!-- Candidate Movers Layer (DIFFERENCE mode) -->
+              <div class="stage-candidates-layer" id="stage-candidates-layer"></div>
+
+              <!-- Expected Position Layer (Optional catalog proper motion target_xy) -->
+              <div class="stage-expected-layer" id="stage-expected-layer">
+                <div class="expected-position-marker" id="expected-position-marker" style="display: none;">
+                  <div class="expected-ring"></div>
+                  <div class="expected-label">EXPECTED POSITION (catalog proper motion)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stage Controls Overlay (SHOW EXPECTED POSITION toggle & ZOOM 1x 2x 4x) -->
+          <div class="stage-controls-overlay">
+            <button type="button" class="stage-toggle-btn active" id="btn-toggle-expected" title="Toggle catalog expected position ring">
+              <span class="stage-check-icon">✓</span> SHOW EXPECTED POSITION
+            </button>
+            <div class="stage-zoom-wrap">
+              <span class="stage-zoom-label">ZOOM</span>
+              <div class="stage-zoom-pills">
+                <button type="button" class="stage-zoom-btn active" data-zoom="1">1x</button>
+                <button type="button" class="stage-zoom-btn" data-zoom="2">2x</button>
+                <button type="button" class="stage-zoom-btn" data-zoom="4">4x</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Fixed Overlays -->
+          <div class="stage-overlay-tl" id="stage-frame-counter">FRAME 1/9</div>
+          <div class="stage-source-badge simulated" id="stage-source-badge">
+            <span class="stage-badge-dot"></span>
+            <span id="stage-source-text">SIMULATED FRAMES</span>
+          </div>
+          <div class="stage-overlay-tr" id="stage-frame-date">2025-01-15</div>
+          <div class="stage-overlay-br" id="stage-detector-label">DETECTOR 1</div>
+
+          <!-- Scale Bar at Bottom-Left (Equals 0.02 deg at current FOV) -->
+          <div class="stage-scale-bar-container" id="stage-scale-bar-container">
+            <div class="stage-scale-bar-line-wrap">
+              <div class="stage-scale-bar-line" id="stage-scale-bar-line" style="width: 60px;"></div>
+            </div>
+            <div class="stage-scale-bar-label">0.02 deg</div>
+          </div>
+
+          <!-- Scanning & Preload Overlay -->
+          <div class="viewer-loading-overlay" id="viewer-loading-overlay" style="display: none;">
+            <div class="viewer-spinner"></div>
+            <div class="viewer-scan-line-text" id="viewer-scan-text">SCANNING 9 FRAMES... 0/9</div>
+            <div class="viewer-progress-bar" id="viewer-progress-bar">
+              <div class="viewer-progress-fill" id="viewer-progress-fill"></div>
+            </div>
+            <!-- Live NASA Fetch Additions (Elapsed Time Counter & Cancel Button) -->
+            <div class="viewer-live-fetch-info" id="viewer-live-fetch-info" style="display: none;">
+              <div class="viewer-elapsed-container" id="viewer-elapsed-container">
+                <span class="viewer-elapsed-label">ELAPSED:</span>
+                <span class="viewer-elapsed-time" id="viewer-elapsed-time">00:00</span>
+              </div>
+              <button type="button" class="hud-btn-44 viewer-btn-cancel" id="viewer-btn-cancel">CANCEL</button>
+            </div>
+          </div>
+
+          <!-- Error Overlay with Retry / Simulated Fallback -->
+          <div class="viewer-error-overlay" id="viewer-error-overlay" style="display: none;">
+            <div class="viewer-error-title">FRAME ACQUISITION FAILED</div>
+            <div class="viewer-error-desc" id="viewer-error-desc">Unable to retrieve SPHEREX survey frames from server.</div>
+            <div class="viewer-error-actions">
+              <button type="button" class="hud-btn-44" id="viewer-btn-retry">RETRY</button>
+              <button type="button" class="hud-btn-44" id="viewer-btn-use-sim">SIMULATED PREVIEW (INSTANT)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Understage Explanation -->
+        <div class="viewer-understage-text" id="viewer-understage-caption">High proper-motion star. Compare the first and last frames: a bright/dark pair appears at the predicted position.</div>
+      </div>
+
+      <!-- Right Control Card (340px) -->
+      <div class="viewer-control-card">
+        <span class="corner-tick tl"></span>
+        <span class="corner-tick tr"></span>
+        <span class="corner-tick bl"></span>
+        <span class="corner-tick br"></span>
+
+        <!-- Target Info Header -->
+        <div class="viewer-target-info">
+          <div class="viewer-target-title-row">
+            <span class="viewer-target-name" id="info-target-name">WISE 0855</span>
+            <span class="viewer-target-type" id="info-target-type">SPHEREX SKY SURVEY</span>
+          </div>
+          <div class="viewer-target-coords">
+            <div class="viewer-coord-item">
+              <span>RA:</span>
+              <span class="viewer-coord-val" id="info-val-ra">08h 55m 10.8s (133.795°)</span>
+            </div>
+            <div class="viewer-coord-item">
+              <span>DEC:</span>
+              <span class="viewer-coord-val" id="info-val-dec">-07° 14' 42.5" (-7.245°)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mode Toggle (44px target) -->
+        <div class="viewer-mode-selector">
+          <button type="button" class="viewer-mode-btn active" data-mode="PLAY" id="btn-mode-play">PLAY</button>
+          <button type="button" class="viewer-mode-btn" data-mode="BLINK" id="btn-mode-blink">BLINK A/B</button>
+          <button type="button" class="viewer-mode-btn" data-mode="DIFFERENCE" id="btn-mode-diff">DIFFERENCE</button>
+        </div>
+
+        <!-- Mode Panel: PLAY -->
+        <div class="viewer-mode-panel" id="panel-play">
+          <div class="viewer-playback-row">
+            <button type="button" class="hud-btn-44 btn-step-prev" id="btn-play-prev" title="Previous Frame (Left Arrow)">◀</button>
+            <button type="button" class="hud-btn-44 btn-play-toggle" id="btn-play-toggle">❚❚ PAUSE</button>
+            <button type="button" class="hud-btn-44 btn-step-next" id="btn-play-next" title="Next Frame (Right Arrow)">▶</button>
+            <button type="button" class="hud-btn-44 btn-loop-toggle active" id="btn-loop-toggle" title="Toggle Loop">LOOP: ON</button>
+          </div>
+
+          <div class="viewer-slider-block">
+            <div class="viewer-slider-header">
+              <span>FRAME TIMELINE</span>
+              <span id="slider-frame-label">FRAME 1 OF 9</span>
+            </div>
+            <div class="viewer-slider-track-wrap">
+              <input type="range" class="viewer-frame-slider" id="viewer-frame-slider" min="1" max="9" step="1" value="1" />
+              <div class="viewer-slider-ticks">
+                <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="viewer-speed-row">
+            <span class="viewer-row-label">PLAY SPEED</span>
+            <div class="speed-pills-wrap">
+              <button type="button" class="speed-pill-btn" data-speed="0.5">0.5x</button>
+              <button type="button" class="speed-pill-btn active" data-speed="1.0">1x</button>
+              <button type="button" class="speed-pill-btn" data-speed="2.0">2x</button>
+              <button type="button" class="speed-pill-btn" data-speed="4.0">4x</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mode Panel: BLINK A/B -->
+        <div class="viewer-mode-panel" id="panel-blink" style="display: none;">
+          <div class="pair-toggle-row">
+            <div class="pair-toggle-group">
+              <button type="button" class="pair-toggle-btn active" data-pair-mode="best" id="btn-blink-pair-best">BEST PAIR</button>
+              <button type="button" class="pair-toggle-btn" data-pair-mode="firstlast" id="btn-blink-pair-firstlast">FIRST AND LAST</button>
+            </div>
+          </div>
+
+          <div class="blink-select-row">
+            <div class="blink-select-col">
+              <label for="select-blink-a" class="blink-label">FRAME A</label>
+              <select id="select-blink-a" class="hud-select-44"></select>
+            </div>
+            <div class="blink-select-col">
+              <label for="select-blink-b" class="blink-label">FRAME B</label>
+              <select id="select-blink-b" class="hud-select-44"></select>
+            </div>
+          </div>
+
+          <div class="blink-pair-info-label" id="blink-pair-info-label">
+            A = frame 1 (...), B = frame 9 (...)
+          </div>
+
+          <div class="viewer-playback-row" style="margin-top: 10px;">
+            <button type="button" class="hud-btn-44 btn-play-toggle" id="btn-blink-toggle" style="flex:1;">❚❚ PAUSE BLINK</button>
+          </div>
+
+          <div class="viewer-speed-row">
+            <span class="viewer-row-label">BLINK RATE</span>
+            <div class="speed-pills-wrap" id="blink-speed-pills">
+              <button type="button" class="speed-pill-btn" data-speed="0.5">0.5x</button>
+              <button type="button" class="speed-pill-btn active" data-speed="0.75">0.75x</button>
+              <button type="button" class="speed-pill-btn" data-speed="1.0">1x</button>
+              <button type="button" class="speed-pill-btn" data-speed="2.0">2x</button>
+              <button type="button" class="speed-pill-btn" data-speed="4.0">4x</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mode Panel: DIFFERENCE -->
+        <div class="viewer-mode-panel" id="panel-diff" style="display: none;">
+          <div class="pair-toggle-row">
+            <div class="pair-toggle-group">
+              <button type="button" class="pair-toggle-btn active" data-pair-mode="best" id="btn-diff-pair-best">BEST PAIR</button>
+              <button type="button" class="pair-toggle-btn" data-pair-mode="firstlast" id="btn-diff-pair-firstlast">FIRST AND LAST</button>
+            </div>
+          </div>
+
+          <div class="blink-select-row">
+            <div class="blink-select-col">
+              <label for="select-diff-a" class="blink-label">FRAME A (SUBTRAHEND)</label>
+              <select id="select-diff-a" class="hud-select-44"></select>
+            </div>
+            <div class="blink-select-col">
+              <label for="select-diff-b" class="blink-label">FRAME B (TARGET)</label>
+              <select id="select-diff-b" class="hud-select-44"></select>
+            </div>
+          </div>
+
+          <div class="diff-gain-row">
+            <div class="diff-gain-header">
+              <span>CONTRAST GAIN</span>
+              <span class="diff-gain-readout" id="diff-gain-readout">2.0x</span>
+            </div>
+            <input type="range" class="viewer-frame-slider" id="diff-gain-slider" min="1.0" max="8.0" step="0.5" value="2.0" />
+          </div>
+
+          <div class="candidates-section">
+            <div class="candidates-header" id="candidates-header">CANDIDATES (0)</div>
+            <div class="candidates-list-wrap" id="candidates-list-wrap"></div>
+            <div class="candidates-note" id="candidates-note">Automatic suggestions. May be noise. Check by eye.</div>
+          </div>
+        </div>
+
+        <!-- FOV Steps Selector -->
+        <div class="viewer-fov-block">
+          <span class="viewer-row-label">FIELD OF VIEW (FOV)</span>
+          <div class="viewer-fov-buttons">
+            <button type="button" class="fov-step-btn" data-fov="0.05">0.05°</button>
+            <button type="button" class="fov-step-btn" data-fov="0.10">0.10°</button>
+            <button type="button" class="fov-step-btn active" data-fov="0.20">0.20°</button>
+            <button type="button" class="fov-step-btn" data-fov="0.40">0.40°</button>
+          </div>
+          <div class="viewer-fov-note" id="viewer-fov-note">Cached demo targets load instantly. Other positions or FOV values fetch live NASA data and can take several minutes.</div>
+        </div>
+
+        <!-- Navigation Buttons -->
+        <div class="viewer-actions-row">
+          <button type="button" class="hud-btn-44 viewer-btn-back" id="btn-viewer-back">&lt; BACK</button>
+          <button type="button" class="hud-btn-44 viewer-btn-new-target" id="btn-viewer-new-target">NEW TARGET</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Grab DOM Elements
+  const displayCanvas        = document.getElementById('viewer-display-canvas');
+  const stageViewport        = document.getElementById('stage-viewport');
+  const stageContent         = document.getElementById('stage-content');
+  const stageExpectedLayer   = document.getElementById('stage-expected-layer');
+  const expectedPositionMarker = document.getElementById('expected-position-marker');
+  const btnToggleExpected    = document.getElementById('btn-toggle-expected');
+  const understageCaption    = document.getElementById('viewer-understage-caption');
+  const blinkPairInfoLabel   = document.getElementById('blink-pair-info-label');
+
+  const stageFrameCounter    = document.getElementById('stage-frame-counter');
+  const stageSourceBadge     = document.getElementById('stage-source-badge');
+  const stageSourceText      = document.getElementById('stage-source-text');
+  const stageFrameDate       = document.getElementById('stage-frame-date');
+  const stageDetectorLabel   = document.getElementById('stage-detector-label');
+  const stageScaleBarLine    = document.getElementById('stage-scale-bar-line');
+  const stageCandidatesLayer = document.getElementById('stage-candidates-layer');
+  const loadingOverlay       = document.getElementById('viewer-loading-overlay');
+  const scanText             = document.getElementById('viewer-scan-text');
+  const progressFill         = document.getElementById('viewer-progress-fill');
+  const progressBar          = document.getElementById('viewer-progress-bar');
+  const liveFetchInfo        = document.getElementById('viewer-live-fetch-info');
+  const elapsedTimeEl        = document.getElementById('viewer-elapsed-time');
+  const btnCancel            = document.getElementById('viewer-btn-cancel');
+  const fovButtonsContainer  = document.querySelector('.viewer-fov-buttons');
+  const errorOverlay         = document.getElementById('viewer-error-overlay');
+  const errorDesc            = document.getElementById('viewer-error-desc');
+  const btnRetry             = document.getElementById('viewer-btn-retry');
+  const btnUseSim            = document.getElementById('viewer-btn-use-sim');
+
+  const infoTargetName       = document.getElementById('info-target-name');
+  const infoValRa            = document.getElementById('info-val-ra');
+  const infoValDec           = document.getElementById('info-val-dec');
+
+  const btnModePlay          = document.getElementById('btn-mode-play');
+  const btnModeBlink         = document.getElementById('btn-mode-blink');
+  const btnModeDiff          = document.getElementById('btn-mode-diff');
+  const panelPlay            = document.getElementById('panel-play');
+  const panelBlink           = document.getElementById('panel-blink');
+  const panelDiff            = document.getElementById('panel-diff');
+
+  const btnPlayToggle        = document.getElementById('btn-play-toggle');
+  const btnPlayPrev          = document.getElementById('btn-play-prev');
+  const btnPlayNext          = document.getElementById('btn-play-next');
+  const btnLoopToggle        = document.getElementById('btn-loop-toggle');
+  const frameSlider          = document.getElementById('viewer-frame-slider');
+  const sliderFrameLabel     = document.getElementById('slider-frame-label');
+
+  const selectBlinkA         = document.getElementById('select-blink-a');
+  const selectBlinkB         = document.getElementById('select-blink-b');
+  const btnBlinkToggle       = document.getElementById('btn-blink-toggle');
+
+  const selectDiffA          = document.getElementById('select-diff-a');
+  const selectDiffB          = document.getElementById('select-diff-b');
+  const diffGainSlider       = document.getElementById('diff-gain-slider');
+  const diffGainReadout      = document.getElementById('diff-gain-readout');
+  const candidatesHeader     = document.getElementById('candidates-header');
+  const candidatesListWrap   = document.getElementById('candidates-list-wrap');
+
+  const btnViewerBack        = document.getElementById('btn-viewer-back');
+  const btnViewerNewTarget   = document.getElementById('btn-viewer-new-target');
+
+  // Elapsed-time counter & live fetch cancellation controller
+  let elapsedTimer = null;
+  let fetchStartTime = null;
+  let activeAbortController = null;
+  let previousLoadedFov = 0.20;
+
+  function startElapsedCounter() {
+    stopElapsedCounter();
+    fetchStartTime = performance.now();
+    if (elapsedTimeEl) elapsedTimeEl.textContent = '00:00';
+    elapsedTimer = setInterval(() => {
+      if (!fetchStartTime) return;
+      const totalSec = Math.floor((performance.now() - fetchStartTime) / 1000);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      if (elapsedTimeEl) {
+        elapsedTimeEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      }
+    }, 500);
+  }
+
+  function stopElapsedCounter() {
+    if (elapsedTimer) {
+      clearInterval(elapsedTimer);
+      elapsedTimer = null;
+    }
+    fetchStartTime = null;
+  }
+
+  const standardFovSteps = [0.05, 0.10, 0.20, 0.40];
+
+  function renderFovControl(entryFov, selectedFov = null) {
+    if (!fovButtonsContainer) return;
+    const entryNum = typeof entryFov === 'number' ? entryFov : parseFloat(entryFov);
+    const activeFov = selectedFov !== null
+      ? (typeof selectedFov === 'number' ? selectedFov : parseFloat(selectedFov))
+      : entryNum;
+
+    const isStandard = standardFovSteps.some(s => Math.abs(s - entryNum) < 0.005);
+    const steps = isStandard
+      ? [...standardFovSteps]
+      : [...standardFovSteps, entryNum].sort((a, b) => a - b);
+
+    fovButtonsContainer.innerHTML = '';
+    steps.forEach(step => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fov-step-btn';
+      btn.dataset.fov = step.toFixed(2);
+      btn.textContent = `${step.toFixed(2)}°`;
+      if (Math.abs(step - activeFov) < 0.005) {
+        btn.classList.add('active');
+      }
+      btn.addEventListener('click', async () => {
+        const newFov = parseFloat(btn.dataset.fov);
+        if (Math.abs(newFov - state.fov) < 0.001) return;
+
+        fovButtonsContainer.querySelectorAll('.fov-step-btn').forEach(b => {
+          b.classList.toggle('active', Math.abs(parseFloat(b.dataset.fov) - newFov) < 0.005);
+        });
+
+        await loadFramesForTarget(state.ra, state.dec, newFov, state.name, false);
+      });
+      fovButtonsContainer.appendChild(btn);
+    });
+  }
+  renderFovControl(state.entryFov, state.fov);
+
+  btnCancel?.addEventListener('click', () => {
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    stopElapsedCounter();
+    loadingOverlay.style.display = 'none';
+
+    if (state.frames && state.frames.length > 0) {
+      state.fov = previousLoadedFov;
+      updateScaleBar();
+      renderFovControl(state.entryFov, state.fov);
+      renderCurrentFrame();
+    } else {
+      errorOverlay.style.display = 'flex';
+      errorDesc.textContent = 'Frame acquisition was cancelled.';
+    }
+  });
+
+  // Populate Dropdowns for frames (1-based on screen)
+  function populateFrameSelects() {
+    const total = state.frames && state.frames.length ? state.frames.length : 9;
+    [selectBlinkA, selectBlinkB, selectDiffA, selectDiffB].forEach(sel => {
+      if (!sel) return;
+      sel.innerHTML = '';
+      for (let i = 1; i <= total; i++) {
+        const opt = document.createElement('option');
+        opt.value = String(i - 1);
+        opt.textContent = `FRAME ${i}`;
+        sel.appendChild(opt);
+      }
+    });
+  }
+
+  // Blink A/B Information Label: "A = frame X (date), B = frame Y (date)"
+  function updateBlinkInfoLabel() {
+    const frameA = state.frames && state.frames[state.blinkFrameA];
+    const frameB = state.frames && state.frames[state.blinkFrameB];
+    const numA = state.blinkFrameA + 1;
+    const numB = state.blinkFrameB + 1;
+    const dateA = frameA?.date || '...';
+    const dateB = frameB?.date || '...';
+    if (blinkPairInfoLabel) {
+      blinkPairInfoLabel.textContent = `A = frame ${numA} (${dateA}), B = frame ${numB} (${dateB})`;
+    }
+  }
+
+  // Apply Pair Mode: "best" or "firstlast"
+  function applyPairMode(mode = state.pairMode) {
+    state.pairMode = mode;
+    document.querySelectorAll('.pair-toggle-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.pairMode === mode);
+    });
+
+    const framesLen = state.frames && state.frames.length ? state.frames.length : 9;
+    let pair = [0, Math.max(0, framesLen - 1)];
+
+    if (mode === 'best') {
+      pair = getDefaultPairForTarget(state.name, framesLen);
+    } else {
+      pair = [0, Math.max(0, framesLen - 1)];
+    }
+
+    state.blinkFrameA = pair[0];
+    state.blinkFrameB = pair[1];
+
+    if (selectBlinkA) selectBlinkA.value = String(pair[0]);
+    if (selectBlinkB) selectBlinkB.value = String(pair[1]);
+    if (selectDiffA)  selectDiffA.value  = String(pair[0]);
+    if (selectDiffB)  selectDiffB.value  = String(pair[1]);
+
+    updateBlinkInfoLabel();
+    renderCurrentFrame();
+  }
+
+  // Expected Position Ring (target_xy)
+  function renderExpectedPosition() {
+    if (!expectedPositionMarker) return;
+    if (!state.showExpectedPosition) {
+      expectedPositionMarker.style.display = 'none';
+      return;
+    }
+    let activeIdx = state.currentFrameIndex;
+    if (state.mode === 'BLINK') {
+      activeIdx = (state.currentFrameIndex % 2 === 0) ? state.blinkFrameA : state.blinkFrameB;
+    } else if (state.mode === 'DIFFERENCE') {
+      activeIdx = state.blinkFrameB;
+    }
+    const curFrame = state.frames && state.frames[activeIdx];
+    if (curFrame && Array.isArray(curFrame.target_xy) && curFrame.target_xy.length === 2) {
+      const [x, y] = curFrame.target_xy;
+      expectedPositionMarker.style.display = 'flex';
+      expectedPositionMarker.style.left = `${x}px`;
+      expectedPositionMarker.style.top = `${y}px`;
+    } else {
+      expectedPositionMarker.style.display = 'none';
+    }
+  }
+
+  // Zoom & Pan Management (1x, 2x, 4x)
+  function setZoom(level) {
+    state.zoomLevel = level;
+    document.querySelectorAll('.stage-zoom-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.zoom, 10) === level);
+    });
+
+    if (level === 1) {
+      state.panX = 0;
+      state.panY = 0;
+    } else {
+      let activeIdx = state.currentFrameIndex;
+      if (state.mode === 'BLINK') {
+        activeIdx = (state.currentFrameIndex % 2 === 0) ? state.blinkFrameA : state.blinkFrameB;
+      } else if (state.mode === 'DIFFERENCE') {
+        activeIdx = state.blinkFrameB;
+      }
+      const curFrame = state.frames && state.frames[activeIdx];
+      let cx = 300;
+      let cy = 300;
+      if (curFrame && Array.isArray(curFrame.target_xy) && curFrame.target_xy.length === 2) {
+        cx = curFrame.target_xy[0];
+        cy = curFrame.target_xy[1];
+      }
+      state.panX = 300 - cx * level;
+      state.panY = 300 - cy * level;
+    }
+    applyZoomPan();
+  }
+
+  function applyZoomPan() {
+    if (!stageContent || !stageViewport) return;
+    stageContent.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoomLevel})`;
+    if (state.zoomLevel > 1) {
+      stageViewport.classList.add('can-pan');
+    } else {
+      stageViewport.classList.remove('can-pan');
+    }
+  }
+
+  // Drag-to-pan on stage viewport
+  let isDraggingStage = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+
+  if (stageViewport) {
+    stageViewport.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('.stage-candidate-marker')) return;
+      if (state.zoomLevel <= 1) return;
+
+      isDraggingStage = true;
+      dragStartX = e.clientX - state.panX;
+      dragStartY = e.clientY - state.panY;
+      stageViewport.classList.add('is-panning');
+      try {
+        stageViewport.setPointerCapture(e.pointerId);
+      } catch {}
+    });
+
+    stageViewport.addEventListener('pointermove', (e) => {
+      if (!isDraggingStage) return;
+      state.panX = e.clientX - dragStartX;
+      state.panY = e.clientY - dragStartY;
+      applyZoomPan();
+    });
+
+    const stopStageDrag = (e) => {
+      if (!isDraggingStage) return;
+      isDraggingStage = false;
+      stageViewport.classList.remove('is-panning');
+      try {
+        stageViewport.releasePointerCapture(e.pointerId);
+      } catch {}
+    };
+
+    stageViewport.addEventListener('pointerup', stopStageDrag);
+    stageViewport.addEventListener('pointercancel', stopStageDrag);
+  }
+
+  // Toggle Expected Position Marker
+  btnToggleExpected?.addEventListener('click', () => {
+    state.showExpectedPosition = !state.showExpectedPosition;
+    btnToggleExpected.classList.toggle('active', state.showExpectedPosition);
+    const checkIcon = btnToggleExpected.querySelector('.stage-check-icon');
+    if (checkIcon) checkIcon.textContent = state.showExpectedPosition ? '✓' : '';
+    renderExpectedPosition();
+  });
+
+  // Stage Zoom Pill Buttons (1x, 2x, 4x)
+  document.querySelectorAll('.stage-zoom-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const level = parseInt(e.currentTarget.dataset.zoom, 10);
+      setZoom(level);
+    });
+  });
+
+  // Pair Mode Toggles (BEST PAIR / FIRST AND LAST)
+  document.querySelectorAll('.pair-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const mode = e.currentTarget.dataset.pairMode;
+      applyPairMode(mode);
+    });
+  });
+
+  populateFrameSelects();
+
+  // ─── Scale Bar Sizing ────────────────────────────────────────────────────────
+  function updateScaleBar() {
+    // Stage pixel width is 600px
+    const stageWidth = 600;
+    // Scale bar length = 0.02 degrees at current FOV
+    const pxLength = (0.02 / state.fov) * stageWidth;
+    stageScaleBarLine.style.width = `${Math.round(pxLength)}px`;
+  }
+
+  // ─── Preload & Render Images onto Display Canvas ────────────────────────────
+  async function loadFramesForTarget(ra, dec, fov, name, isNewEntry = false, options = {}) {
+    const fovNum = typeof fov === 'number' ? fov : parseFloat(fov);
+    state.ra = ra;
+    state.dec = dec;
+    state.fov = fovNum;
+    const targetInfo = getTargetInfo(name, ra, dec) || getSelectedTarget();
+    state.name = name || targetInfo?.name || "BARNARD'S STAR";
+
+    if (sky) {
+      if (typeof sky.setProbeCoordinates === 'function') {
+        sky.setProbeCoordinates(ra, dec);
+      }
+      if (typeof sky.centerOnTarget === 'function') {
+        sky.centerOnTarget(ra, dec, 0);
+      }
+    }
+
+    if (understageCaption) {
+      understageCaption.textContent = getCaptionForTarget(state.name);
+    }
+
+    if (isNewEntry || typeof state.entryFov !== 'number') {
+      state.entryFov = fovNum;
+    }
+
+    renderFovControl(state.entryFov, state.fov);
+
+    infoTargetName.textContent = state.name;
+    infoValRa.textContent = formatRA(ra);
+    infoValDec.textContent = formatDec(dec);
+
+    updateScaleBar();
+
+    const fovFormatted = fovNum.toFixed(2);
+    const cacheKey = `${ra.toFixed(4)},${dec.toFixed(4)},${fovFormatted}`;
+
+    // Force simulated frames preview directly
+    if (options.forceSimulated) {
+      stopElapsedCounter();
+      loadingOverlay.style.display = 'none';
+      errorOverlay.style.display = 'none';
+      const sim = await generateSimFrames(ra, dec, fovNum, state.name);
+      state.frames = sim.frames;
+      state.source = 'simulated';
+      state.mock = true;
+      previousLoadedFov = state.fov;
+      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock });
+      populateFrameSelects();
+      applyPairMode('best');
+      setZoom(1);
+      renderCurrentFrame();
+      return;
+    }
+
+    // Preloaded result supplied directly from HUD load button
+    if (options.preloadedResult) {
+      stopElapsedCounter();
+      loadingOverlay.style.display = 'none';
+      errorOverlay.style.display = 'none';
+      const preloadedResult = options.preloadedResult;
+      const preloadedImages = await Promise.all(preloadedResult.frames.map(frame => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(img);
+          img.src = frame.image_url;
+        });
+      }));
+      preloadedResult.frames.forEach((f, idx) => {
+        f.loadedImage = preloadedImages[idx];
+      });
+      state.frames = preloadedResult.frames;
+      state.source = preloadedResult.source;
+      state.mock = Boolean(preloadedResult.mock === true || preloadedResult.source !== 'api');
+      previousLoadedFov = state.fov;
+      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock });
+      populateFrameSelects();
+      applyPairMode('best');
+      setZoom(1);
+      renderCurrentFrame();
+      return;
+    }
+
+    if (frameCache.has(cacheKey)) {
+      const cached = frameCache.get(cacheKey);
+      state.frames = cached.frames;
+      state.source = cached.source;
+      state.mock = cached.mock ?? (cached.source !== 'api');
+      previousLoadedFov = state.fov;
+      stopElapsedCounter();
+      loadingOverlay.style.display = 'none';
+      populateFrameSelects();
+      applyPairMode('best');
+      setZoom(1);
+      renderCurrentFrame();
+      return;
+    }
+
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+    activeAbortController = new AbortController();
+    const signal = activeAbortController.signal;
+
+    const isLive = Boolean(options.liveFetch);
+
+    loadingOverlay.style.display = 'flex';
+    errorOverlay.style.display = 'none';
+
+    if (isLive) {
+      scanText.textContent = 'FETCHING REAL DATA... this can take several minutes';
+      if (progressBar) progressBar.style.display = 'none';
+      if (liveFetchInfo) liveFetchInfo.style.display = 'flex';
+      startElapsedCounter();
+    } else {
+      scanText.textContent = 'SCANNING 9 FRAMES... 0/9';
+      if (progressFill) progressFill.style.width = '0%';
+      if (progressBar) progressBar.style.display = 'block';
+      if (liveFetchInfo) liveFetchInfo.style.display = 'none';
+      stopElapsedCounter();
+    }
+
+    const startTime = performance.now();
+    let timeoutId = null;
+
+    if (isLive) {
+      // 20 minutes timeout
+      timeoutId = setTimeout(() => {
+        if (activeAbortController) {
+          activeAbortController.abort(new Error('Live fetch timed out after 20 minutes'));
+        }
+      }, 20 * 60 * 1000);
+    }
+
+    try {
+      const result = await getFrames(ra, dec, fovNum, {
+        cachedOnly: !isLive,
+        name,
+        signal,
+        onStatus: (d) => {
+          const serverMsg = d?.message || 'FETCHING REAL DATA... this can take several minutes';
+          scanText.textContent = serverMsg;
+          if (typeof d?.elapsed_seconds === 'number') {
+            const sec = Math.max(0, Math.floor(d.elapsed_seconds));
+            const mins = Math.floor(sec / 60);
+            const secs = sec % 60;
+            if (elapsedTimeEl) {
+              elapsedTimeEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            }
+            fetchStartTime = performance.now() - (sec * 1000);
+          }
+          if (progressBar) progressBar.style.display = 'none';
+          if (liveFetchInfo) liveFetchInfo.style.display = 'flex';
+          if (!elapsedTimer) {
+            startElapsedCounter();
+          }
+        },
+        onProgress: (info, total) => {
+          if (info && (info.status === 'fetching' || typeof info === 'object')) {
+            const serverMsg = info.message || 'FETCHING REAL DATA... this can take several minutes';
+            scanText.textContent = serverMsg;
+            if (typeof info.elapsed_seconds === 'number') {
+              const sec = Math.max(0, Math.floor(info.elapsed_seconds));
+              const mins = Math.floor(sec / 60);
+              const secs = sec % 60;
+              if (elapsedTimeEl) {
+                elapsedTimeEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+              }
+              fetchStartTime = performance.now() - (sec * 1000);
+            }
+            if (progressBar) progressBar.style.display = 'none';
+            if (liveFetchInfo) liveFetchInfo.style.display = 'flex';
+            if (!elapsedTimer) {
+              startElapsedCounter();
+            }
+          } else if (typeof info === 'number') {
+            if (!isLive) {
+              scanText.textContent = `SCANNING 9 FRAMES... ${info}/${total}`;
+              if (progressFill) progressFill.style.width = `${(info / total) * 100}%`;
+            }
+          }
+        },
+      });
+
+      if (timeoutId) clearTimeout(timeoutId);
+      if (signal.aborted) return;
+
+      // Ensure all images are preloaded into HTMLImageElements
+      const preloadedImages = await Promise.all(result.frames.map(frame => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(img);
+          img.src = frame.image_url;
+        });
+      }));
+
+      if (signal.aborted) return;
+
+      result.frames.forEach((f, idx) => {
+        f.loadedImage = preloadedImages[idx];
+      });
+
+      state.preloadTimeMs = performance.now() - startTime;
+      state.frames = result.frames;
+      state.source = result.source;
+      state.mock = Boolean(result.mock === true || result.source !== 'api');
+      previousLoadedFov = state.fov;
+
+      frameCache.set(cacheKey, { frames: state.frames, source: state.source, mock: state.mock });
+
+      stopElapsedCounter();
+      loadingOverlay.style.display = 'none';
+      populateFrameSelects();
+      applyPairMode('best');
+      setZoom(1);
+      renderCurrentFrame();
+    } catch (err) {
+      if (timeoutId) clearTimeout(timeoutId);
+      stopElapsedCounter();
+      loadingOverlay.style.display = 'none';
+
+      // 404 "not cached": show HUD dialog
+      if (err.isNotCached || err.status === 404) {
+        if (window.__argusHUD && typeof window.__argusHUD.showNotCachedDialog === 'function') {
+          window.__argusHUD.showNotCachedDialog({
+            ra,
+            dec,
+            fov: fovNum,
+            name,
+          });
+        }
+        return;
+      }
+
+      if (signal.aborted || err.name === 'AbortError') {
+        if (activeAbortController && activeAbortController.signal !== signal) return;
+        if (state.frames && state.frames.length > 0) {
+          state.fov = previousLoadedFov;
+          updateScaleBar();
+          renderFovControl(state.entryFov, state.fov);
+          renderCurrentFrame();
+        } else {
+          errorOverlay.style.display = 'flex';
+          errorDesc.textContent = err.message || 'Frame acquisition was cancelled.';
+        }
+        return;
+      }
+      errorOverlay.style.display = 'flex';
+      errorDesc.textContent = err.message || 'Unable to retrieve frames.';
+      console.warn('Frame acquisition error:', err);
+    }
+  }
+
+  // ─── Render Frame on Canvas ──────────────────────────────────────────────────
+  function renderCurrentFrame() {
+    if (!state.frames || state.frames.length === 0) return;
+
+    // Track frame timing for average frame time calculation
+    const now = performance.now();
+    const delta = now - lastFrameTime;
+    lastFrameTime = now;
+    if (delta > 20 && delta < 2000) {
+      frameTimeHistory.push(delta);
+      if (frameTimeHistory.length > 20) frameTimeHistory.shift();
+      state.avgFrameTimeMs = frameTimeHistory.reduce((a, b) => a + b, 0) / frameTimeHistory.length;
+    }
+
+    // Source Badge: "SIMULATED FRAMES" if the API response has mock: true (or no API is set), otherwise "SPHEREX DATA"
+    if (state.source === 'api' && state.mock !== true) {
+      stageSourceBadge.className = 'stage-source-badge api';
+      stageSourceText.textContent = 'SPHEREX DATA';
+    } else {
+      stageSourceBadge.className = 'stage-source-badge simulated';
+      stageSourceText.textContent = 'SIMULATED FRAMES';
+    }
+
+    const ctx = displayCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    if (state.mode === 'DIFFERENCE') {
+      stageCandidatesLayer.style.display = 'block';
+      const frameA = state.frames[state.blinkFrameA];
+      const frameB = state.frames[state.blinkFrameB];
+      if (!frameA || !frameB) return;
+
+      const diffResult = computeDifference(frameA.imageData, frameB.imageData, state.diffGain);
+      state.diffResult = diffResult;
+      state.candidates = diffResult.candidates;
+
+      ctx.clearRect(0, 0, 600, 600);
+      ctx.drawImage(diffResult.diffCanvas, 0, 0);
+
+      // Overlays
+      stageFrameCounter.textContent = `DIFF |F${state.blinkFrameB + 1} - F${state.blinkFrameA + 1}|`;
+      stageFrameDate.textContent = `${frameB.date} - ${frameA.date}`;
+      stageDetectorLabel.textContent = `GAIN ${state.diffGain.toFixed(1)}x`;
+
+      renderCandidates(diffResult.candidates);
+      renderExpectedPosition();
+      return;
+    }
+
+    // Clear candidates in PLAY and BLINK modes
+    stageCandidatesLayer.style.display = 'none';
+    stageCandidatesLayer.innerHTML = '';
+
+    let activeIdx = state.currentFrameIndex;
+    let labelPrefix = '';
+
+    if (state.mode === 'BLINK') {
+      activeIdx = (state.currentFrameIndex % 2 === 0) ? state.blinkFrameA : state.blinkFrameB;
+      labelPrefix = (state.currentFrameIndex % 2 === 0) ? '[A] ' : '[B] ';
+      updateBlinkInfoLabel();
+    }
+
+    const curFrame = state.frames[activeIdx];
+    if (!curFrame) return;
+
+    ctx.clearRect(0, 0, 600, 600);
+    if (curFrame.loadedImage) {
+      ctx.drawImage(curFrame.loadedImage, 0, 0);
+    } else if (curFrame.imageData) {
+      ctx.putImageData(curFrame.imageData, 0, 0);
+    }
+
+    // Stage Overlay updates
+    stageFrameCounter.textContent = `FRAME ${activeIdx + 1}/9 ${labelPrefix}`;
+    stageFrameDate.textContent = curFrame.date;
+    stageDetectorLabel.textContent = curFrame.detector || 'DETECTOR 1';
+
+    // Slider sync
+    if (frameSlider && state.mode === 'PLAY') {
+      frameSlider.value = String(activeIdx + 1);
+      sliderFrameLabel.textContent = `FRAME ${activeIdx + 1} OF 9`;
+    }
+
+    renderExpectedPosition();
+  }
+
+  // ─── Render Candidate Movers on Stage & In Card ──────────────────────────────
+  function renderCandidates(candidates) {
+    stageCandidatesLayer.innerHTML = '';
+    candidatesListWrap.innerHTML = '';
+    candidatesHeader.textContent = `CANDIDATES (${candidates.length})`;
+
+    if (candidates.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'candidates-note';
+      empty.textContent = 'No candidate moving object above threshold.';
+      candidatesListWrap.appendChild(empty);
+      return;
+    }
+
+    candidates.forEach(c => {
+      // Stage Marker (Pulsing Red Ring)
+      const marker = document.createElement('div');
+      marker.className = 'stage-candidate-marker';
+      marker.style.left = `${(c.x / 600) * 100}%`;
+      marker.style.top = `${(c.y / 600) * 100}%`;
+      marker.innerHTML = `
+        <div class="candidate-pulse-ring"></div>
+        <div class="candidate-marker-tag">C${c.id}</div>
+      `;
+      marker.addEventListener('click', () => {
+        highlightCandidate(c.id);
+      });
+      stageCandidatesLayer.appendChild(marker);
+
+      // Card List Item
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'candidate-item-btn';
+      btn.id = `candidate-item-${c.id}`;
+      btn.innerHTML = `
+        <span>CANDIDATE ${c.id}</span>
+        <span style="color:var(--color-amber);">X:${c.x} Y:${c.y} (+${c.sigmaAbove}σ)</span>
+      `;
+      btn.addEventListener('click', () => {
+        highlightCandidate(c.id);
+      });
+      candidatesListWrap.appendChild(btn);
+    });
+  }
+
+  function highlightCandidate(id) {
+    const listBtns = candidatesListWrap.querySelectorAll('.candidate-item-btn');
+    listBtns.forEach(b => b.style.borderColor = '');
+    const activeBtn = document.getElementById(`candidate-item-${id}`);
+    if (activeBtn) activeBtn.style.borderColor = '#ffbe3b';
+  }
+
+  // ─── Playback Loop ──────────────────────────────────────────────────────────
+  let playbackTimer = null;
+
+  function scheduleNextFrame() {
+    if (playbackTimer) clearTimeout(playbackTimer);
+    if (!state.isPlaying) return;
+
+    // Base interval 400ms at 1.0x speed
+    const interval = Math.max(50, 400 / state.speedMultiplier);
+
+    playbackTimer = setTimeout(() => {
+      if (!state.isPlaying) return;
+
+      if (state.mode === 'PLAY') {
+        const nextIdx = state.currentFrameIndex + 1;
+        if (nextIdx >= 9) {
+          if (state.isLooping) {
+            state.currentFrameIndex = 0;
+          } else {
+            state.isPlaying = false;
+            updatePlayButton();
+            renderCurrentFrame();
+            return;
+          }
+        } else {
+          state.currentFrameIndex = nextIdx;
+        }
+      } else if (state.mode === 'BLINK') {
+        state.currentFrameIndex = (state.currentFrameIndex + 1) % 2;
+      }
+
+      renderCurrentFrame();
+      scheduleNextFrame();
+    }, interval);
+  }
+
+  function updatePlayButton() {
+    if (state.isPlaying) {
+      btnPlayToggle.textContent = '❚❚ PAUSE';
+      btnBlinkToggle.textContent = '❚❚ PAUSE BLINK';
+    } else {
+      btnPlayToggle.textContent = '▶ PLAY';
+      btnBlinkToggle.textContent = '▶ PLAY BLINK';
+    }
+  }
+
+  function togglePlayPause() {
+    state.isPlaying = !state.isPlaying;
+    updatePlayButton();
+    if (state.isPlaying) {
+      scheduleNextFrame();
+    } else if (playbackTimer) {
+      clearTimeout(playbackTimer);
+    }
+  }
+
+  // ─── Mode Switching ──────────────────────────────────────────────────────────
+  function setMode(newMode) {
+    state.mode = newMode;
+    [btnModePlay, btnModeBlink, btnModeDiff].forEach(b => b.classList.remove('active'));
+    panelPlay.style.display = 'none';
+    panelBlink.style.display = 'none';
+    panelDiff.style.display = 'none';
+
+    if (newMode === 'PLAY') {
+      btnModePlay.classList.add('active');
+      panelPlay.style.display = 'flex';
+      if (state.isPlaying) scheduleNextFrame();
+    } else if (newMode === 'BLINK') {
+      btnModeBlink.classList.add('active');
+      panelBlink.style.display = 'flex';
+      state.speedMultiplier = 0.75;
+      document.querySelectorAll('#blink-speed-pills .speed-pill-btn').forEach(b => {
+        b.classList.toggle('active', parseFloat(b.dataset.speed) === 0.75);
+      });
+      updateBlinkInfoLabel();
+      if (state.isPlaying) scheduleNextFrame();
+    } else if (newMode === 'DIFFERENCE') {
+      btnModeDiff.classList.add('active');
+      panelDiff.style.display = 'flex';
+      if (playbackTimer) clearTimeout(playbackTimer);
+    }
+    renderCurrentFrame();
+  }
+
+  // ─── Event Listeners ─────────────────────────────────────────────────────────
+  // Mode Buttons
+  btnModePlay.addEventListener('click', () => setMode('PLAY'));
+  btnModeBlink.addEventListener('click', () => setMode('BLINK'));
+  btnModeDiff.addEventListener('click', () => setMode('DIFFERENCE'));
+
+  // Playback Buttons
+  btnPlayToggle.addEventListener('click', togglePlayPause);
+  btnBlinkToggle.addEventListener('click', togglePlayPause);
+
+  btnPlayPrev.addEventListener('click', () => {
+    state.currentFrameIndex = (state.currentFrameIndex - 1 + 9) % 9;
+    renderCurrentFrame();
+  });
+
+  btnPlayNext.addEventListener('click', () => {
+    state.currentFrameIndex = (state.currentFrameIndex + 1) % 9;
+    renderCurrentFrame();
+  });
+
+  btnLoopToggle.addEventListener('click', () => {
+    state.isLooping = !state.isLooping;
+    btnLoopToggle.classList.toggle('active', state.isLooping);
+    btnLoopToggle.textContent = `LOOP: ${state.isLooping ? 'ON' : 'OFF'}`;
+  });
+
+  frameSlider.addEventListener('input', (e) => {
+    state.currentFrameIndex = parseInt(e.target.value, 10) - 1;
+    renderCurrentFrame();
+  });
+
+  // Speed Buttons
+  document.querySelectorAll('.speed-pill-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const speed = parseFloat(e.currentTarget.dataset.speed);
+      state.speedMultiplier = speed;
+      document.querySelectorAll(`.speed-pill-btn[data-speed="${speed}"]`).forEach(b => {
+        b.classList.add('active');
+      });
+      document.querySelectorAll(`.speed-pill-btn:not([data-speed="${speed}"])`).forEach(b => {
+        b.classList.remove('active');
+      });
+      if (state.isPlaying) scheduleNextFrame();
+    });
+  });
+
+  // Blink Selectors
+  selectBlinkA.addEventListener('change', (e) => {
+    state.blinkFrameA = parseInt(e.target.value, 10);
+    if (selectDiffA) selectDiffA.value = e.target.value;
+    updateBlinkInfoLabel();
+    renderCurrentFrame();
+  });
+
+  selectBlinkB.addEventListener('change', (e) => {
+    state.blinkFrameB = parseInt(e.target.value, 10);
+    if (selectDiffB) selectDiffB.value = e.target.value;
+    updateBlinkInfoLabel();
+    renderCurrentFrame();
+  });
+
+  // Diff Selectors & Gain
+  selectDiffA.addEventListener('change', (e) => {
+    state.blinkFrameA = parseInt(e.target.value, 10);
+    if (selectBlinkA) selectBlinkA.value = e.target.value;
+    updateBlinkInfoLabel();
+    renderCurrentFrame();
+  });
+
+  selectDiffB.addEventListener('change', (e) => {
+    state.blinkFrameB = parseInt(e.target.value, 10);
+    if (selectBlinkB) selectBlinkB.value = e.target.value;
+    updateBlinkInfoLabel();
+    renderCurrentFrame();
+  });
+
+  diffGainSlider.addEventListener('input', (e) => {
+    const gain = parseFloat(e.target.value);
+    state.diffGain = gain;
+    diffGainReadout.textContent = `${gain.toFixed(1)}x`;
+    renderCurrentFrame();
+  });
+
+  // Error Actions
+  btnRetry.addEventListener('click', () => {
+    loadFramesForTarget(state.ra, state.dec, state.fov, state.name, false);
+  });
+
+  btnUseSim.addEventListener('click', () => {
+    // Force simulated frames fallback
+    errorOverlay.style.display = 'none';
+    loadFramesForTarget(state.ra, state.dec, state.fov, state.name, false, { forceSimulated: true });
+  });
+
+  // Navigation Buttons
+  function goBackToProbeConfirmed() {
+    if (playbackTimer) clearTimeout(playbackTimer);
+    if (typeof window.setScreen === 'function') {
+      window.setScreen('probe');
+    }
+    // Return to probe in the CONFIRMED state
+    if (window.__argusHUD && typeof window.__argusHUD.setLocBarState === 'function') {
+      window.__argusHUD.setLocBarState('confirmed');
+    }
+  }
+
+  function goBackToProbeMenu() {
+    if (playbackTimer) clearTimeout(playbackTimer);
+    if (typeof window.setScreen === 'function') {
+      window.setScreen('probe');
+    }
+    // Return to probe menu
+    if (window.__argusHUD) {
+      if (typeof window.__argusHUD.setPanelView === 'function') {
+        window.__argusHUD.setPanelView('menu');
+      }
+      if (typeof window.__argusHUD.setLocBarState === 'function') {
+        window.__argusHUD.setLocBarState('editing');
+      }
+    }
+  }
+
+  btnViewerBack.addEventListener('click', goBackToProbeConfirmed);
+  btnViewerNewTarget.addEventListener('click', goBackToProbeMenu);
+
+  // ─── Keyboard Navigation ─────────────────────────────────────────────────────
+  window.addEventListener('keydown', (e) => {
+    if (!document.body.classList.contains('screen-viewer')) return;
+
+    const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+    if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
+
+    if (e.code === 'Space') {
+      e.preventDefault();
+      togglePlayPause();
+    } else if (e.code === 'ArrowLeft') {
+      e.preventDefault();
+      state.currentFrameIndex = (state.currentFrameIndex - 1 + 9) % 9;
+      renderCurrentFrame();
+    } else if (e.code === 'ArrowRight') {
+      e.preventDefault();
+      state.currentFrameIndex = (state.currentFrameIndex + 1) % 9;
+      renderCurrentFrame();
+    } else if (e.key === 'b' || e.key === 'B') {
+      e.preventDefault();
+      const modes = ['PLAY', 'BLINK', 'DIFFERENCE'];
+      const curIdx = modes.indexOf(state.mode);
+      const nextMode = modes[(curIdx + 1) % modes.length];
+      setMode(nextMode);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      goBackToProbeConfirmed();
+    }
+  });
+
+  // ─── Entry Point from argus:probe Event ──────────────────────────────────────
+  window.addEventListener('argus:probe', (e) => {
+    const { ra, dec, fov, name, preloadedResult, forceSimulated, liveFetch } = e.detail || {};
+    const selected = getSelectedTarget();
+    const defaultTarget = Object.values(TARGETS)[0];
+    const targetRa = (typeof ra === 'number') ? ra : (selected?.ra ?? defaultTarget.ra);
+    const targetDec = (typeof dec === 'number') ? dec : (selected?.dec ?? defaultTarget.dec);
+    const targetFov = (typeof fov === 'number') ? fov : (selected?.fov ?? defaultTarget.fov);
+    const targetName = name || selected?.name || defaultTarget.name;
+
+    // Transition to viewer (avoid hashchange reload)
+    if (typeof window.setScreen === 'function') {
+      window.setScreen('viewer', false);
+    }
+
+    state.entryFov = targetFov;
+    loadFramesForTarget(targetRa, targetDec, targetFov, targetName, true, {
+      preloadedResult,
+      forceSimulated,
+      liveFetch,
+    });
+  });
+
+  // ─── URL Query / Hash Detection on Load ──────────────────────────────────────
+  function checkUrlForViewer() {
+    const url = new URL(window.location.href);
+    let qRa = url.searchParams.get('ra');
+    let qDec = url.searchParams.get('dec');
+    let qFov = url.searchParams.get('fov');
+    let qName = url.searchParams.get('name');
+    const hasHashViewer = window.location.hash.startsWith('#viewer');
+
+    if (qRa === null && window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#viewer[?&]?/, ''));
+      if (hashParams.has('ra')) qRa = hashParams.get('ra');
+      if (hashParams.has('dec')) qDec = hashParams.get('dec');
+      if (hashParams.has('fov')) qFov = hashParams.get('fov');
+      if (hashParams.has('name')) qName = hashParams.get('name');
+    }
+
+    if (qRa !== null && qDec !== null) {
+      const ra = parseFloat(qRa);
+      const dec = parseFloat(qDec);
+      const fov = qFov !== null ? parseFloat(qFov) : 0.20;
+      const targetObj = getTargetInfo(qName, ra, dec);
+      const name = qName || targetObj?.name || 'CUSTOM SPOT';
+
+      if (typeof window.setScreen === 'function') {
+        window.setScreen('viewer', false);
+      }
+      state.entryFov = fov;
+      loadFramesForTarget(ra, dec, fov, name, true);
+    } else if (hasHashViewer && (!state.frames || state.frames.length === 0)) {
+      const selected = getSelectedTarget() || Object.values(TARGETS)[0];
+      const ra = selected?.ra ?? 269.452;
+      const dec = selected?.dec ?? 4.693;
+      const fov = selected?.fov ?? 0.20;
+      const name = selected?.name || "BARNARD'S STAR";
+
+      if (typeof window.setScreen === 'function') {
+        window.setScreen('viewer', false);
+      }
+      state.entryFov = fov;
+      loadFramesForTarget(ra, dec, fov, name, true);
+    }
+  }
+
+  window.addEventListener('hashchange', () => {
+    if (window.location.hash.startsWith('#viewer')) {
+      const url = new URL(window.location.href);
+      const hasSearch = url.searchParams.has('ra') && url.searchParams.has('dec');
+      const hashPart = window.location.hash.replace(/^#viewer[?&]?/, '');
+      const hashParams = new URLSearchParams(hashPart);
+      const hasHashCoords = hashParams.has('ra') && hashParams.has('dec');
+      if (hasSearch || hasHashCoords) {
+        checkUrlForViewer();
+      }
+    }
+  });
+
+  checkUrlForViewer();
+
+  // Expose verification API for automated testing & measurements
+  window.__argusViewer = {
+    getState: () => ({ ...state }),
+    getSourceBadgeText: () => stageSourceText?.textContent || '',
+    getSourceBadgeClass: () => stageSourceBadge?.className || '',
+    getFrameCount: () => (state.frames ? state.frames.length : 0),
+    getPreloadTime: () => Math.round(state.preloadTimeMs),
+    getFov: () => state.fov,
+    getEntryFov: () => state.entryFov,
+    getFovSteps: () => Array.from(document.querySelectorAll('.fov-step-btn')).map(b => parseFloat(b.dataset.fov)),
+    getActiveFov: () => {
+      const b = document.querySelector('.fov-step-btn.active');
+      return b ? parseFloat(b.dataset.fov) : null;
+    },
+    isLiveFetch: () => !isCachedDemoTarget(state.ra, state.dec, state.fov),
+    cancelFetch: () => { btnCancel?.click(); },
+    getElapsedText: () => elapsedTimeEl?.textContent || '',
+    getMoverPositions: () => {
+      if (!state.frames || state.frames.length < 9) return null;
+      return {
+        frame1: state.frames[0].moverPos,
+        frame9: state.frames[8].moverPos,
+      };
+    },
+    getStaticStarPosition: () => {
+      if (!state.frames || state.frames.length < 9) return null;
+      return {
+        frame1: state.frames[0].staticStarSample,
+        frame9: state.frames[8].staticStarSample,
+      };
+    },
+    getDifferenceMetrics: () => {
+      if (!state.diffResult) {
+        // Run difference if not currently in diff mode
+        if (state.frames && state.frames.length >= 9) {
+          const res = computeDifference(state.frames[0].imageData, state.frames[8].imageData, state.diffGain);
+          return res.metrics;
+        }
+        return null;
+      }
+      return state.diffResult.metrics;
+    },
+    getCandidates: () => state.candidates || [],
+    getScaleBarLength: (fov) => {
+      return (0.02 / fov) * 600;
+    },
+    getAverageFrameTime: () => Math.round(state.avgFrameTimeMs),
+    setMode: (m) => setMode(m),
+    loadFrames: (r, d, f, n) => loadFramesForTarget(r, d, f, n, true),
+    getState: () => state,
+    getBlinkPair: () => [state.blinkFrameA, state.blinkFrameB],
+    getBlinkInfoText: () => blinkPairInfoLabel?.textContent || '',
+    getZoomLevel: () => state.zoomLevel,
+    getPan: () => [state.panX, state.panY],
+    getCaptionText: () => understageCaption?.textContent || '',
+    getExpectedPositionVisible: () => expectedPositionMarker?.style.display !== 'none',
+    setZoom: (z) => setZoom(z),
+    setPairMode: (m) => applyPairMode(m),
+    toggleExpectedPosition: () => btnToggleExpected?.click(),
+  };
+}
