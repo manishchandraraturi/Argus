@@ -26,6 +26,7 @@ The file has two parts: (1) plain functions that make/convert frames, (2) the we
 """
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -38,6 +39,8 @@ import numpy as np
 
 from convert import array_to_png
 
+logger = logging.getLogger("argus.server")
+
 # ── Settings ──────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
 PNG_DIR = BASE_DIR / "cache" / "png"
@@ -49,7 +52,7 @@ FRAME_SIZE = 600
 START_DATE = date(2026, 1, 1)
 STEP_DAYS = 30
 MAX_FOV_DEG = 10.0
-DEMO_DIR = BASE_DIR / os.environ.get("DEMO_DIR", "demo_cache")      # pre-fetched real frames for the demo targets (see CACHE_FORMAT.md)
+DEMO_DIR = BASE_DIR / os.environ.get("DEMO_DIR", "demo_cache_final" if (BASE_DIR / "demo_cache_final").is_dir() else "demo_cache")      # pre-fetched real frames for the demo targets (see CACHE_FORMAT.md)
 FETCH_MESSAGE = ("Fetching new frames from IRSA. This can take many minutes right now. "
                  "Keep this page open, it will update when the frames are ready.")
 
@@ -85,9 +88,9 @@ def get_live_max_jobs():
 
 def get_live_job_max_s():
     try:
-        return float(os.environ.get("LIVE_JOB_MAX_S", "180"))
+        return float(os.environ.get("LIVE_JOB_MAX_S", "300"))
     except (ValueError, TypeError):
-        return 180.0
+        return 300.0
 
 
 def cache_key(ra, dec, fov):
@@ -384,9 +387,25 @@ def _run_live_job(key, ra, dec, fov, stem):
     Runs in a background thread: live fetch and streaming PNG conversion.
     Fails only if fewer than 3 PNGs exist.
     """
+    t_start = time.time()
     try:
         LIVE_PNG_DIR.mkdir(parents=True, exist_ok=True)
         LIVE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        try:
+            workers = int(os.environ.get("LIVE_WORKERS", "4"))
+        except (ValueError, TypeError):
+            workers = 4
+        workers = max(1, min(workers, 6))
+        os.environ["LIVE_WORKERS"] = str(workers)
+
+        job_max = int(get_live_job_max_s())
+        os.environ.setdefault("LIVE_DEADLINE_S", str(job_max))
+
+        msg_start = f"[live_job] START: key={key} ra={ra} dec={dec} fov={fov} using LIVE_WORKERS={workers} (deadline={job_max}s)"
+        print(msg_start)
+        logger.info(msg_start)
+
         converted_frames = []
         conv_lock = threading.Lock()
 
@@ -447,6 +466,11 @@ def _run_live_job(key, ra, dec, fov, stem):
         os.replace(tmp_disk, disk_file)
 
         now = time.time()
+        elapsed = round(now - t_start, 2)
+        msg_finish = f"[live_job] FINISHED: key={key} converted {len(converted_frames)} frames in {elapsed}s using LIVE_WORKERS={workers}"
+        print(msg_finish)
+        logger.info(msg_finish)
+
         with _lock:
             if key in _jobs:
                 _jobs[key].update(
@@ -460,6 +484,10 @@ def _run_live_job(key, ra, dec, fov, stem):
             }
         cleanup_live_cache()
     except Exception as e:
+        elapsed = round(time.time() - t_start, 2)
+        msg_fail = f"[live_job] FAILED: key={key} after {elapsed}s: {e}"
+        print(msg_fail)
+        logger.error(msg_fail)
         with _lock:
             if key in _jobs:
                 _jobs[key].update(
