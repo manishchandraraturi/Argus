@@ -948,7 +948,12 @@ export function initHUD(sky) {
 
     // Button: SIMULATED PREVIEW (INSTANT)
     if (btnSimPreview) {
-      btnSimPreview.onclick = () => {
+      btnSimPreview.onclick = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        window.isLive = false;
         closeDialog();
         setLocBarState('editing');
         if (typeof window.setScreen === 'function') {
@@ -968,7 +973,13 @@ export function initHUD(sky) {
 
     // Button: FETCH REAL DATA
     if (btnLiveFetch) {
-      btnLiveFetch.onclick = () => {
+      btnLiveFetch.onclick = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        console.log("FETCH CLICKED");
+        window.isLive = true;
         closeDialog();
         setLocBarState('editing');
         if (typeof window.setScreen === 'function') {
@@ -987,7 +998,12 @@ export function initHUD(sky) {
     }
 
     if (btnCancel) {
-      btnCancel.onclick = () => {
+      btnCancel.onclick = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        window.isLive = false;
         closeDialog();
       };
     }

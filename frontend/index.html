@@ -531,42 +531,42 @@
       </div>
     </div>
 
-    <!-- 15. Not Cached HUD Modal Dialog -->
-    <div id="hud-not-cached-dialog" class="hud-modal-overlay" style="display: none;">
-      <div class="hud-modal-box">
-        <div class="hud-modal-header">
-          <span class="hud-modal-icon">⚠</span>
-          <span class="hud-modal-title">REAL DATA IS NOT PRE-LOADED FOR THIS SPOT</span>
-        </div>
-        <div class="hud-modal-body">
-          <div class="hud-modal-coords" id="not-cached-dialog-coords">RA 100.000° // DEC +20.000° // FOV 0.20°</div>
-          <p class="hud-modal-desc">This sky location has not been pre-cached in the local SPHEREX demo survey database.</p>
-        </div>
-        <div class="hud-modal-actions">
-          <button type="button" class="hud-btn-action hud-btn-sim-preview" id="btn-dialog-sim-preview">
+  </div>
+
+  <!-- 15. Not Cached HUD Modal Dialog -->
+  <div id="hud-not-cached-dialog" class="hud-modal-overlay" style="display: none;">
+    <div class="hud-modal-box">
+      <div class="hud-modal-header">
+        <span class="hud-modal-icon">⚠</span>
+        <span class="hud-modal-title">REAL DATA IS NOT PRE-LOADED FOR THIS SPOT</span>
+      </div>
+      <div class="hud-modal-body">
+        <div class="hud-modal-coords" id="not-cached-dialog-coords">RA 100.000° // DEC +20.000° // FOV 0.20°</div>
+        <p class="hud-modal-desc">This sky location has not been pre-cached in the local SPHEREX demo survey database.</p>
+      </div>
+      <div class="hud-modal-actions">
+        <button type="button" class="hud-btn-action hud-btn-sim-preview" id="btn-dialog-sim-preview">
+          <span class="corner-tick tl"></span><span class="corner-tick tr"></span>
+          <span class="corner-tick bl"></span><span class="corner-tick br"></span>
+          <span>SIMULATED PREVIEW (INSTANT)</span>
+        </button>
+
+        <div id="dialog-live-fetch-container" class="dialog-live-fetch-container">
+          <button type="button" class="hud-btn-action hud-btn-live-fetch" id="btn-dialog-live-fetch" style="display: none;">
             <span class="corner-tick tl"></span><span class="corner-tick tr"></span>
             <span class="corner-tick bl"></span><span class="corner-tick br"></span>
-            <span>SIMULATED PREVIEW (INSTANT)</span>
+            <span>FETCH REAL DATA (MAY TAKE SEVERAL MINUTES)</span>
           </button>
-
-          <div id="dialog-live-fetch-container" class="dialog-live-fetch-container">
-            <button type="button" class="hud-btn-action hud-btn-live-fetch" id="btn-dialog-live-fetch" style="display: none;">
-              <span class="corner-tick tl"></span><span class="corner-tick tr"></span>
-              <span class="corner-tick bl"></span><span class="corner-tick br"></span>
-              <span>FETCH REAL DATA (MAY TAKE SEVERAL MINUTES)</span>
-            </button>
-            <div class="hud-modal-notice" id="dialog-live-notice" style="display: none;">
-              Live fetching for new positions is only available on the demo laptop. Real data is pre-loaded for the 5 demo targets.
-            </div>
+          <div class="hud-modal-notice" id="dialog-live-notice" style="display: none;">
+            Live fetching for new positions is only available on the demo laptop. Real data is pre-loaded for the 5 demo targets.
           </div>
-
-          <button type="button" class="hud-card-back-btn hud-modal-cancel-btn" id="btn-dialog-cancel">
-            <span class="back-bracket">&lt;</span> CANCEL
-          </button>
         </div>
+
+        <button type="button" class="hud-card-back-btn hud-modal-cancel-btn" id="btn-dialog-cancel">
+          <span class="back-bracket">&lt;</span> CANCEL
+        </button>
       </div>
     </div>
-
   </div>
 </div>
 
