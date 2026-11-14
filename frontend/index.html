@@ -570,6 +570,72 @@
   </div>
 </div>
 
+<!-- Mission Info Button (Top-Right Corner next to HUD) -->
+<button id="btn-mission-info" class="hud-info-btn" type="button" aria-label="Mission Info">
+  <span class="corner-tick tl"></span>
+  <span class="corner-tick tr"></span>
+  <span class="corner-tick bl"></span>
+  <span class="corner-tick br"></span>
+  <span class="info-icon">ℹ</span>
+  <span class="info-text">INFO</span>
+</button>
+
+<!-- 16. Mission Info Modal Dialog -->
+<div id="mission-info-modal" class="hud-modal-overlay mission-info-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="mission-info-title">
+  <div class="hud-modal-box mission-info-box">
+    <span class="corner-tick tl"></span>
+    <span class="corner-tick tr"></span>
+    <span class="corner-tick bl"></span>
+    <span class="corner-tick br"></span>
+
+    <div class="hud-modal-header mission-info-header">
+      <div class="mission-info-title-wrap">
+        <span class="mission-info-badge">MISSION BRIEF</span>
+        <h2 class="hud-modal-title mission-info-title" id="mission-info-title">ARGUS // SEE WHAT MOVES</h2>
+      </div>
+      <button type="button" class="mission-info-close-btn" id="btn-close-mission-info" aria-label="Close modal">✕</button>
+    </div>
+
+    <div class="hud-modal-body mission-info-body">
+      <!-- Section: The Pipeline -->
+      <div class="mission-info-section">
+        <div class="mission-info-label">
+          <span class="section-bullet">◈</span> THE PIPELINE
+        </div>
+        <p class="mission-info-text">
+          We pull raw FITS images from the NASA/IPAC IRSA SPHEREx archive, match wavelengths (within 0.2µm) to avoid false brightness changes, align the frames, and use difference imaging to isolate moving objects.
+        </p>
+      </div>
+
+      <!-- Section: How to Read -->
+      <div class="mission-info-section">
+        <div class="mission-info-label">
+          <span class="section-bullet">◈</span> HOW TO READ
+        </div>
+        <p class="mission-info-text">
+          The green ring indicates the catalog expected position. A dot that shifts outside the ring across the timeline is a candidate moving object.
+        </p>
+      </div>
+
+      <!-- Section: AI Disclosure -->
+      <div class="mission-info-section mission-info-ai-section">
+        <div class="mission-info-label">
+          <span class="section-bullet">◈</span> AI DISCLOSURE
+        </div>
+        <p class="mission-info-text">
+          Backend pipeline, 3D UI, and image processing co-developed with Antigravity and Claude AI.
+        </p>
+      </div>
+    </div>
+
+    <div class="hud-modal-actions mission-info-actions">
+      <button type="button" class="hud-card-back-btn mission-info-dismiss-btn" id="btn-dismiss-mission-info">
+        <span class="back-bracket">&lt;</span> CLOSE
+      </button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import { initSky } from './src/sky.js';
   import { initHUD } from './src/hud.js';

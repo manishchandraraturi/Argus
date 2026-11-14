@@ -31,6 +31,7 @@ export const TARGET_TODO_COORDINATES = {
     dist2: "0.10 DEG",
     bestPair: [1, 9],
     caption: "Variable star. No motion claim is made.",
+    isVariable: true,
   },
   "R Draconis": {
     ra: 248.168,
@@ -41,6 +42,7 @@ export const TARGET_TODO_COORDINATES = {
     dist2: "0.10 DEG",
     bestPair: [0, 11],
     caption: "Variable star. No motion claim is made.",
+    isVariable: true,
   },
 };
 

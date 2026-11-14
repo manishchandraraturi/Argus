@@ -1902,7 +1902,80 @@ export function initHUD(sky) {
     updateConfirmBarCacheStatus,
     getSliderUpdatesPerSec: () => sliderUpdatesPerSec,
     triggerBackToLanding: () => runBackToLandingSequence(btnMenuBack),
+    openMissionInfo: () => openMissionInfo(),
+    closeMissionInfo: () => closeMissionInfo(),
+    isMissionInfoOpen: () => missionInfoModal ? (missionInfoModal.style.display !== 'none') : false,
   };
+
+  // ── Mission Info Modal Controller ───────────────────────────────────────────
+  const btnMissionInfo = document.getElementById('btn-mission-info');
+  const missionInfoModal = document.getElementById('mission-info-modal');
+  const btnCloseMissionInfo = document.getElementById('btn-close-mission-info');
+  const btnDismissMissionInfo = document.getElementById('btn-dismiss-mission-info');
+
+  function openMissionInfo() {
+    if (missionInfoModal) {
+      missionInfoModal.style.display = 'flex';
+      missionInfoModal.classList.add('active');
+      document.body.classList.add('mission-info-open');
+    }
+  }
+
+  function closeMissionInfo() {
+    if (missionInfoModal) {
+      missionInfoModal.style.display = 'none';
+      missionInfoModal.classList.remove('active');
+      document.body.classList.remove('mission-info-open');
+    }
+  }
+
+  if (btnMissionInfo) {
+    btnMissionInfo.onclick = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      openMissionInfo();
+    };
+  }
+
+  if (btnCloseMissionInfo) {
+    btnCloseMissionInfo.onclick = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      closeMissionInfo();
+    };
+  }
+
+  if (btnDismissMissionInfo) {
+    btnDismissMissionInfo.onclick = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      closeMissionInfo();
+    };
+  }
+
+  if (missionInfoModal) {
+    missionInfoModal.addEventListener('click', (e) => {
+      if (e.target === missionInfoModal) {
+        closeMissionInfo();
+      }
+    });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && missionInfoModal && missionInfoModal.style.display !== 'none') {
+      e.stopPropagation();
+      closeMissionInfo();
+    }
+  }, true);
+
+  window.openMissionInfo = openMissionInfo;
+  window.closeMissionInfo = closeMissionInfo;
 
   // ── HUD Master Animation Loop (60fps, paused on tab hidden) ────────────────
   let hudFrameId;
