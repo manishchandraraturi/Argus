@@ -1,3 +1,5 @@
+
+https://github.com/user-attachments/assets/4c51c0f8-7ad9-4b8a-9c32-bd7e6c1ca213
 <div align="center">
 
 <img src="docs/assets/hero.png" alt="ARGUS - See what moves. A SPHEREx sky survey explorer" width="100%">
@@ -17,6 +19,15 @@
 </div>
 
 <!-- VIDEO SLOT: paste the github.com/user-attachments/... video link on the empty line below, then delete this comment line -->
+
+
+https://github.com/user-attachments/assets/1c88b944-9cdb-49ef-9b0e-3bd0fc5fcc17
+
+
+
+
+
+https://github.com/user-attachments/assets/331c991a-ea95-4d49-9103-c7c0af72c583
 
 
 
