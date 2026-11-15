@@ -1,0 +1,17 @@
+{
+  "target": "Barnard's Star",
+  "predicted_shift_px": 9.33,
+  "predicted_shift_arcsec": 11.19,
+  "predicted_direction_deg": 355.7,
+  "measured_shift_px": 17.58,
+  "measured_shift_arcsec": 21.09,
+  "measured_direction_deg": 0.9,
+  "shift_difference_px": 8.33,
+  "direction_difference_deg": 5.2,
+  "rule": "length < 0.5 px and direction difference < 20 deg",
+  "verdict": "NO MATCH",
+  "verdict_text": "PARTIAL: direction agrees (5.2 deg), size does not (measured 17.58 px vs predicted 9.33 px, about 1.9x). Not confirmed.",
+  "candidate_summary": "1 of 5 targets shows a visible candidate (unconfirmed).",
+  "window_px": 25,
+  "method": "Centroids of positive and negative difference-image lobes inside a 25 px window around midpoint"
+}

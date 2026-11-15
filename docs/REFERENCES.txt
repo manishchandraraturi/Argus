@@ -1,0 +1,57 @@
+================================================================================
+ARGUS CITATIONS & REFERENCES
+================================================================================
+
+1. NASA SPHEREx Survey Reference
+   - Crill, B. P., Werner, M., Akeson, R., et al. (2020). "SPHEREx: An All-Sky 
+     Spectral Survey." Proceedings of the SPIE, Volume 11443, 114430I.
+     DOI: 10.1117/12.2562476.
+   - SPHEREx Project Overview: https://spherex.caltech.edu/
+
+2. Astronomical Literature
+   - Luhman, K. L., & Esplin, T. L. (2016). "The Spectral Energy Distribution 
+     of the Coldest Known Brown Dwarf." The Astronomical Journal, Volume 152, 
+     Issue 3, Article 78. arXiv:1605.06655. DOI: 10.3847/0004-6256/152/3/78.
+
+3. Python Backend Libraries & Tools (backend/requirements.txt & tools/)
+   - fastapi: High performance asynchronous web framework.
+     URL: https://fastapi.tiangolo.com/
+   - uvicorn: Lightning-fast ASGI server implementation.
+     URL: https://www.uvicorn.org/
+   - astropy: Community Python library for astronomy (FITS, WCS, coordinates).
+     Astropy Collaboration et al. (2022). ApJ 935(2), 167. DOI: 10.3847/1538-4357/ac7c74.
+   - pyvo: Virtual Observatory client for data discovery and access.
+     URL: https://pyvo.readthedocs.io/
+   - astroquery: Astropy affiliated package for querying astronomical web services.
+     Ginsburg, A., et al. (2019). AJ 157(3), 98. DOI: 10.3847/1538-3881/aafc33.
+   - reproject: Astronomical image reprojection and sub-pixel WCS alignment.
+     URL: https://reproject.readthedocs.io/
+   - numpy: Fundamental package for array computing in Python.
+     Harris, C. R., et al. (2020). Nature 585, 357–362. DOI: 10.1038/s41586-020-2649-2.
+   - pillow: Python Imaging Library for PNG quantization and raster generation.
+     URL: https://python-pillow.org/
+   - requests: HTTP client for Python.
+     URL: https://requests.readthedocs.io/
+
+4. Frontend JavaScript Libraries (frontend/package.json)
+   - d3-geo: Geometric projections for spherical trigonometry and celestial coordinates.
+     URL: https://github.com/d3/d3-geo
+   - topojson-client: Manipulate and decode TopoJSON topological representations.
+     URL: https://github.com/topojson/topojson-client
+   - world-atlas: TopoJSON earth country boundaries for 3D globe visualization.
+     URL: https://github.com/topojson/world-atlas
+   - three: WebGL-based 3D scene renderer for the interactive celestial sphere.
+     URL: https://threejs.org/
+   - vite: Next-generation frontend build tooling and development server.
+     URL: https://vite.dev/
+
+5. Typography & Fonts
+   - Barlow Condensed: Display typography for headers and telemetry callouts.
+     Designed by Jeremy Tribby (Google Fonts).
+   - Share Tech Mono: Monospaced font for coordinate readouts and astrometry logs.
+     Designed by Carrois Apostrophe (Google Fonts).
+
+6. AI Tools
+   - Antigravity with Gemini (Google DeepMind): Multi-agent architecture and coding assistance.
+   - Claude (Anthropic): Collaborative logic design and code generation.
+================================================================================

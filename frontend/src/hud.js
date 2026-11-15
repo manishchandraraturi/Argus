@@ -1,5 +1,7 @@
 import { TARGETS, isCachedDemoTarget } from './targets.js';
 import { API_BASE, ALLOW_LIVE_FETCH, getApiBase, getAllowLiveFetch, getRequestUrl, getFrames, setSelectedTarget, getSelectedTarget, findMatchingCachedTarget } from './api.js';
+import { FEATURES } from './config.js';
+import { startGuidedDemo, stopGuidedDemo } from './demo.js';
 
 // ─── 11. ARGUS Brand Constant ─────────────────────────────────────────────────
 export const PROJECT_NAME = "ARGUS";
@@ -918,7 +920,7 @@ export function initHUD(sky) {
 
     if (allowLive) {
       if (titleEl) titleEl.textContent = 'REAL DATA IS NOT PRE-LOADED FOR THIS SPOT';
-      if (descEl) descEl.textContent = 'A LIVE FETCH TAKES ABOUT 1 TO 2 MINUTES AND CAN TAKE LONGER.';
+      if (descEl) descEl.textContent = 'A LIVE FETCH TAKES ABOUT 1 TO 2 MINUTES WHEN NASA\'S ARCHIVE RESPONDS; MAY BE SLOWER OR THROTTLED.';
       if (btnLiveFetch) {
         btnLiveFetch.style.display = 'flex';
         const span = btnLiveFetch.querySelector('span:not(.corner-tick)') || btnLiveFetch;
@@ -1912,6 +1914,24 @@ export function initHUD(sky) {
   const missionInfoModal = document.getElementById('mission-info-modal');
   const btnCloseMissionInfo = document.getElementById('btn-close-mission-info');
   const btnDismissMissionInfo = document.getElementById('btn-dismiss-mission-info');
+
+  // ── Guided Demo Controller ──────────────────────────────────────────────────
+  if (FEATURES.guidedDemo) {
+    const btnGuidedDemo = document.getElementById('btn-guided-demo');
+    if (btnGuidedDemo) {
+      btnGuidedDemo.onclick = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        try {
+          startGuidedDemo();
+        } catch (err) {
+          console.error('[hud] Failed to start guided demo:', err);
+        }
+      };
+    }
+  }
 
   function openMissionInfo() {
     if (missionInfoModal) {

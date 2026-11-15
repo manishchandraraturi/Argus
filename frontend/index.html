@@ -542,7 +542,7 @@
       </div>
       <div class="hud-modal-body">
         <div class="hud-modal-coords" id="not-cached-dialog-coords">RA 100.000° // DEC +20.000° // FOV 0.20°</div>
-        <p class="hud-modal-desc">This sky location has not been pre-cached in the local SPHEREX demo survey database.</p>
+        <p class="hud-modal-desc">This sky location has not been pre-cached in the local SPHEREX demo survey database. A live fetch takes about 1 to 2 minutes when NASA's archive responds; may be slower or throttled.</p>
       </div>
       <div class="hud-modal-actions">
         <button type="button" class="hud-btn-action hud-btn-sim-preview" id="btn-dialog-sim-preview">
@@ -555,7 +555,7 @@
           <button type="button" class="hud-btn-action hud-btn-live-fetch" id="btn-dialog-live-fetch" style="display: none;">
             <span class="corner-tick tl"></span><span class="corner-tick tr"></span>
             <span class="corner-tick bl"></span><span class="corner-tick br"></span>
-            <span>FETCH REAL DATA (MAY TAKE SEVERAL MINUTES)</span>
+            <span>FETCH REAL DATA</span>
           </button>
           <div class="hud-modal-notice" id="dialog-live-notice" style="display: none;">
             Live fetching for new positions is only available on the demo laptop. Real data is pre-loaded for the 5 demo targets.
@@ -569,6 +569,16 @@
     </div>
   </div>
 </div>
+
+<!-- Guided Demo Button -->
+<button id="btn-guided-demo" class="hud-demo-btn" type="button" aria-label="Guided Demo">
+  <span class="corner-tick tl"></span>
+  <span class="corner-tick tr"></span>
+  <span class="corner-tick bl"></span>
+  <span class="corner-tick br"></span>
+  <span class="demo-icon">▶</span>
+  <span class="demo-text">DEMO</span>
+</button>
 
 <!-- Mission Info Button (Top-Right Corner next to HUD) -->
 <button id="btn-mission-info" class="hud-info-btn" type="button" aria-label="Mission Info">
@@ -597,13 +607,23 @@
     </div>
 
     <div class="hud-modal-body mission-info-body">
+      <!-- Section: Why It Matters -->
+      <div class="mission-info-section">
+        <div class="mission-info-label">
+          <span class="section-bullet">◈</span> WHY IT MATTERS
+        </div>
+        <p class="mission-info-text">
+          SPHEREx will map the entire sky in 102 infrared bands every 6 months. A fast visual tool lets astronomers inspect candidate moving objects, brown dwarfs, and variable stars without downloading gigabytes of raw FITS files.
+        </p>
+      </div>
+
       <!-- Section: The Pipeline -->
       <div class="mission-info-section">
         <div class="mission-info-label">
           <span class="section-bullet">◈</span> THE PIPELINE
         </div>
         <p class="mission-info-text">
-          We pull raw FITS images from the NASA/IPAC IRSA SPHEREx archive, match wavelengths (within 0.2µm) to avoid false brightness changes, align the frames, and use difference imaging to isolate moving objects.
+          We pull raw FITS images from the NASA/IPAC IRSA SPHEREx archive, match wavelengths (within 0.2µm) to avoid false brightness changes, align the frames, and highlight changes between frames so candidate moving objects can be checked by eye.
         </p>
       </div>
 
@@ -614,6 +634,29 @@
         </div>
         <p class="mission-info-text">
           The green ring indicates the catalog expected position. A dot that shifts outside the ring across the timeline is a candidate moving object.
+        </p>
+      </div>
+
+      <!-- Section: What to Know (Limitations) -->
+      <div class="mission-info-section">
+        <div class="mission-info-label">
+          <span class="section-bullet">◈</span> WHAT TO KNOW (LIMITATIONS)
+        </div>
+        <ul class="mission-info-list" style="margin: 6px 0 0 16px; padding: 0; color: rgba(255, 255, 255, 0.85); font-family: var(--font-body, sans-serif); font-size: 13px; line-height: 1.5;">
+          <li>Automated motion detection is an early prototype (1 of 5 targets visible by eye, not confirmed; 0/5 automated centroid checks pass).</li>
+          <li>Difference imaging works best on identical wavelengths; cross-band pairs can show false residuals.</li>
+          <li>SPHEREx Level 2 data has raw detector artifacts: edge cutoffs, stray light, and cosmic rays are not removed.</li>
+          <li>Live fetch queries NASA's live IRSA server and can be slow or fail when NASA is throttled.</li>
+        </ul>
+      </div>
+
+      <!-- Section: Next Steps -->
+      <div class="mission-info-section">
+        <div class="mission-info-label">
+          <span class="section-bullet">◈</span> NEXT STEPS
+        </div>
+        <p class="mission-info-text">
+          WCS reprojection for sub-pixel alignment, point-spread-function (PSF) matching before subtraction, and an automated Gaia cross-match for known high proper motion stars.
         </p>
       </div>
 

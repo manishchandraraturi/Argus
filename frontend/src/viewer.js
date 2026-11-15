@@ -1,6 +1,8 @@
 import { getFrames, API_BASE, getApiBase, getSelectedTarget, setSelectedTarget, findMatchingCachedTarget } from './api.js';
 import { generateSimFrames } from './simFrames.js';
 import { TARGETS, getDefaultPairForTarget, getCaptionForTarget, getTargetInfo, isCachedDemoTarget } from './targets.js';
+import { FEATURES, VIGNETTE_DEFAULT } from './config.js';
+import validationData from './validation.json';
 
 // ─── Coordinate Formatting Utilities ──────────────────────────────────────────
 export function formatRA(raDeg) {
@@ -219,6 +221,7 @@ export function initViewer(sky) {
     panX: 0,
     panY: 0,
     showExpectedPosition: true,
+    vignetteEnabled: (typeof VIGNETTE_DEFAULT === 'boolean' ? VIGNETTE_DEFAULT : false),
     diffGain: 2.0,
     isPlaying: true,
     speedMultiplier: 1.0, // 0.5x, 0.75x, 1x, 2x, 4x
@@ -279,28 +282,16 @@ export function initViewer(sky) {
           <!-- Telescope Lens Vignette Overlay -->
           <div class="stage-lens-vignette" id="stage-lens-vignette"></div>
 
-          <!-- Stage Controls Overlay (SHOW EXPECTED POSITION toggle & ZOOM 1x 2x 4x) -->
-          <div class="stage-controls-overlay">
-            <button type="button" class="stage-toggle-btn active" id="btn-toggle-expected" title="Toggle catalog expected position ring">
-              <span class="stage-check-icon">✓</span> SHOW EXPECTED POSITION
-            </button>
-            <div class="stage-zoom-wrap">
-              <span class="stage-zoom-label">ZOOM</span>
-              <div class="stage-zoom-pills">
-                <button type="button" class="stage-zoom-btn active" data-zoom="1">1x</button>
-                <button type="button" class="stage-zoom-btn" data-zoom="2">2x</button>
-                <button type="button" class="stage-zoom-btn" data-zoom="4">4x</button>
-              </div>
+          <!-- Top Bar Overlays (Evenly spaced & aligned across the top) -->
+          <div class="stage-top-bar" id="stage-top-bar">
+            <div class="stage-overlay-tl" id="stage-frame-counter">FRAME 1/9</div>
+            <div class="stage-source-badge simulated" id="stage-source-badge">
+              <span class="stage-badge-dot"></span>
+              <span id="stage-source-text">SIMULATED FRAMES</span>
             </div>
+            <div class="stage-overlay-tr" id="stage-frame-date">2025-01-15</div>
           </div>
 
-          <!-- Fixed Overlays -->
-          <div class="stage-overlay-tl" id="stage-frame-counter">FRAME 1/9</div>
-          <div class="stage-source-badge simulated" id="stage-source-badge">
-            <span class="stage-badge-dot"></span>
-            <span id="stage-source-text">SIMULATED FRAMES</span>
-          </div>
-          <div class="stage-overlay-tr" id="stage-frame-date">2025-01-15</div>
           <div class="stage-overlay-br" id="stage-detector-label">DETECTOR 1</div>
 
           <!-- Scale Bar at Bottom-Left (Equals 0.02 deg at current FOV) -->
@@ -340,20 +331,54 @@ export function initViewer(sky) {
           </div>
         </div>
 
+        <!-- Stage Toolbar (Positioned cleanly below image stage, grouped logically) -->
+        <div class="stage-toolbar" id="stage-toolbar">
+          <div class="toolbar-group toolbar-group-view">
+            <div class="stage-zoom-wrap" id="stage-zoom-wrap">
+              <span class="stage-zoom-label">ZOOM</span>
+              <div class="stage-zoom-pills">
+                <button type="button" class="stage-zoom-btn active" data-zoom="1">1x</button>
+                <button type="button" class="stage-zoom-btn" data-zoom="2">2x</button>
+                <button type="button" class="stage-zoom-btn" data-zoom="4">4x</button>
+              </div>
+            </div>
+            <button type="button" class="stage-toggle-btn active" id="btn-toggle-expected" title="Toggle catalog expected position ring">
+              <span class="stage-check-icon">✓</span> EXPECTED POSITION
+            </button>
+            <button type="button" class="stage-toggle-btn" id="btn-toggle-vignette" title="Toggle telescope aperture mask overlay">
+              VIGNETTE: OFF
+            </button>
+          </div>
+          <div class="toolbar-group toolbar-group-action">
+            <button type="button" class="stage-toggle-btn stage-action-btn" id="btn-save-image" title="Save current frame as PNG">
+              <svg class="stage-btn-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+              </svg>
+              SAVE IMAGE
+            </button>
+          </div>
+        </div>
+
+        <!-- Detector Edge Artifact Warning (Epsilon Indi B only) -->
+        <div class="viewer-artifact-warning" id="viewer-artifact-warning" style="display: none;">
+          <span class="warning-icon">⚠</span> DETECTOR EDGE ARTIFACT, NOT AN OBJECT
+        </div>
+
         <!-- Understage Explanation -->
         <div class="viewer-understage-text" id="viewer-understage-caption">High proper-motion star. Compare the first and last frames: a bright/dark pair appears at the predicted position.</div>
 
-        <!-- Scientific Proof Validation Box (Barnard's Star only) -->
-        <div class="viewer-scientific-proof-box" id="viewer-scientific-proof" style="display: none;">
+        <!-- Motion Check Validation Card (Barnard's Star only) -->
+        <div class="viewer-scientific-proof-box motion-check-card" id="viewer-scientific-proof" style="display: none;">
           <span class="corner-tick tl"></span>
           <span class="corner-tick tr"></span>
           <span class="corner-tick bl"></span>
           <span class="corner-tick br"></span>
           <div class="proof-header">
-            <span class="proof-badge-dot"></span>
-            <span class="proof-badge-text">ASTROMETRIC VERIFICATION</span>
+            <span class="proof-badge-dot warning"></span>
+            <span class="proof-badge-text">MOTION CHECK</span>
           </div>
-          <div class="proof-content" id="viewer-scientific-proof-text">VALIDATION: Measured proper motion (7.36 px) matches predicted catalog motion (9.33 px). Correct direction verified.</div>
+          <div class="proof-content" id="viewer-scientific-proof-text"></div>
         </div>
       </div>
 
@@ -513,7 +538,7 @@ export function initViewer(sky) {
             <button type="button" class="fov-step-btn active" data-fov="0.20">0.20°</button>
             <button type="button" class="fov-step-btn" data-fov="0.40">0.40°</button>
           </div>
-          <div class="viewer-fov-note" id="viewer-fov-note">Cached demo targets load instantly. Other positions or FOV values fetch live NASA data and can take several minutes.</div>
+          <div class="viewer-fov-note" id="viewer-fov-note">Cached demo targets load instantly. Other positions or FOV values fetch live NASA data (about 1 to 2 minutes when NASA's archive responds; may be slower or throttled).</div>
         </div>
 
         <!-- Navigation Buttons -->
@@ -532,6 +557,10 @@ export function initViewer(sky) {
   const stageExpectedLayer   = document.getElementById('stage-expected-layer');
   const expectedPositionMarker = document.getElementById('expected-position-marker');
   const btnToggleExpected    = document.getElementById('btn-toggle-expected');
+  const btnToggleVignette    = document.getElementById('btn-toggle-vignette');
+  const btnSaveImage         = document.getElementById('btn-save-image');
+  const stageLensVignette    = document.getElementById('stage-lens-vignette');
+  const artifactWarningEl    = document.getElementById('viewer-artifact-warning');
   const understageCaption    = document.getElementById('viewer-understage-caption');
   const scientificProofBox   = document.getElementById('viewer-scientific-proof');
   const blinkPairInfoLabel   = document.getElementById('blink-pair-info-label');
@@ -793,8 +822,49 @@ export function initViewer(sky) {
 
   function updateScientificProofBox() {
     if (!scientificProofBox) return;
-    const isBarnard = isBarnardsStar(state.name, state.ra, state.dec);
-    scientificProofBox.style.display = isBarnard ? 'flex' : 'none';
+    try {
+      if (!FEATURES.validationCard) {
+        scientificProofBox.style.display = 'none';
+        return;
+      }
+      const isBarnard = isBarnardsStar(state.name, state.ra, state.dec);
+      if (!isBarnard) {
+        scientificProofBox.style.display = 'none';
+        return;
+      }
+      const predPx = validationData.predicted_shift_px;
+      const measPx = validationData.measured_shift_px;
+      const dirDiff = validationData.direction_difference_deg;
+      const ratio = (measPx / predPx).toFixed(1);
+      const verdictText = `PARTIAL: direction agrees (${dirDiff} deg), size does not (measured ${measPx} px vs predicted ${predPx} px, about ${ratio}x). Not confirmed.`;
+      const candidateSummary = validationData.candidate_summary || '1 of 5 targets shows a visible candidate (unconfirmed).';
+
+      const proofContentEl = document.getElementById('viewer-scientific-proof-text');
+      if (proofContentEl) {
+        proofContentEl.innerHTML = `
+          <div class="motion-check-line">Predicted shift (catalog proper motion): ${predPx} px</div>
+          <div class="motion-check-line">Measured shift (difference-image centroids): ${measPx} px</div>
+          <div class="motion-check-line">Direction difference: ${dirDiff} deg</div>
+          <div class="motion-check-verdict warning">${verdictText}</div>
+          <div class="motion-check-summary">${candidateSummary}</div>
+        `;
+      }
+      scientificProofBox.style.display = 'flex';
+    } catch (err) {
+      console.error('[viewer] Failed to update motion check box:', err);
+      scientificProofBox.style.display = 'none';
+    }
+  }
+
+  function updateArtifactWarning() {
+    if (!artifactWarningEl) return;
+    try {
+      const isEpsIndi = (state.name || '').toUpperCase().includes('EPSILON INDI');
+      artifactWarningEl.style.display = isEpsIndi ? 'inline-flex' : 'none';
+    } catch (err) {
+      console.error('[viewer] Failed to update artifact warning:', err);
+      artifactWarningEl.style.display = 'none';
+    }
   }
 
   // Expected Position Ring (target_xy)
@@ -914,6 +984,49 @@ export function initViewer(sky) {
     renderExpectedPosition();
   });
 
+  // Apply Vignette Overlay State
+  function applyVignetteState() {
+    try {
+      if (!FEATURES.vignetteToggle) {
+        if (stageLensVignette) stageLensVignette.style.display = 'none';
+        if (btnToggleVignette) btnToggleVignette.style.display = 'none';
+        return;
+      }
+      if (stageLensVignette) {
+        stageLensVignette.style.display = state.vignetteEnabled ? 'block' : 'none';
+      }
+      if (btnToggleVignette) {
+        btnToggleVignette.classList.toggle('active', state.vignetteEnabled);
+        btnToggleVignette.textContent = state.vignetteEnabled ? 'VIGNETTE: ON' : 'VIGNETTE: OFF';
+      }
+    } catch (err) {
+      console.error('[viewer] Failed to apply vignette state:', err);
+    }
+  }
+
+  btnToggleVignette?.addEventListener('click', () => {
+    state.vignetteEnabled = !state.vignetteEnabled;
+    applyVignetteState();
+  });
+  applyVignetteState();
+
+  // Save Image Button (Downloads exact raw canvas pixels without vignette)
+  btnSaveImage?.addEventListener('click', () => {
+    try {
+      if (!displayCanvas) return;
+      const dataUrl = displayCanvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      const targetName = (state.name || 'target').replace(/[^a-zA-Z0-9_-]/g, '_');
+      link.download = `argus_${targetName}_frame_${state.currentFrameIndex + 1}.png`;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('[viewer] Failed to save image:', err);
+    }
+  });
+
   // Stage Zoom Pill Buttons (1x, 2x, 4x)
   document.querySelectorAll('.stage-zoom-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -963,6 +1076,7 @@ export function initViewer(sky) {
       }
     }
     updateScientificProofBox();
+    updateArtifactWarning();
 
     const rawFrames = Array.isArray(response) ? response : (response.frames || []);
 
@@ -1112,6 +1226,7 @@ export function initViewer(sky) {
       }
     }
     updateScientificProofBox();
+    updateArtifactWarning();
 
     const isVariable = isVariableTarget(state.name, state.ra, state.dec);
     if (btnToggleExpected) {
@@ -1178,7 +1293,7 @@ export function initViewer(sky) {
 
     if (isLive) {
       setRightPanelWaiting(true);
-      scanText.textContent = 'FETCHING REAL DATA... this can take several minutes';
+      scanText.textContent = "FETCHING REAL DATA (about 1 to 2 minutes when NASA's archive responds; may be slower or throttled)...";
       if (progressBar) progressBar.style.display = 'none';
       if (liveFetchInfo) liveFetchInfo.style.display = 'flex';
       if (liveFramesCount) {
@@ -1203,7 +1318,7 @@ export function initViewer(sky) {
       // 20 minutes timeout
       timeoutId = setTimeout(() => {
         if (activeAbortController) {
-          activeAbortController.abort(new Error('Live fetch timed out after 20 minutes'));
+          activeAbortController.abort(new Error("Live fetch timed out (NASA archive took too long to respond; may be throttled)"));
         }
       }, 20 * 60 * 1000);
     }
@@ -1215,7 +1330,7 @@ export function initViewer(sky) {
         signal,
         onStatus: (d) => {
           setRightPanelWaiting(true);
-          const serverMsg = d?.message || 'FETCHING REAL DATA... this can take several minutes';
+          const serverMsg = d?.message || "FETCHING REAL DATA (about 1 to 2 minutes when NASA's archive responds; may be slower or throttled)...";
           scanText.textContent = serverMsg;
           if (d?.progress && typeof d.progress.done === 'number' && typeof d.progress.total === 'number') {
             const { done, total } = d.progress;
@@ -1242,7 +1357,7 @@ export function initViewer(sky) {
         onProgress: (info, total) => {
           if (info && (info.status === 'fetching' || typeof info === 'object')) {
             setRightPanelWaiting(true);
-            const serverMsg = info.message || 'FETCHING REAL DATA... this can take several minutes';
+            const serverMsg = info.message || "FETCHING REAL DATA (about 1 to 2 minutes when NASA's archive responds; may be slower or throttled)...";
             scanText.textContent = serverMsg;
             if (info?.progress && typeof info.progress.done === 'number' && typeof info.progress.total === 'number') {
               const { done, total } = info.progress;
@@ -1900,6 +2015,28 @@ export function initViewer(sky) {
     getScientificProofText: () => {
       const el = document.getElementById('viewer-scientific-proof-text');
       return el ? el.textContent.trim() : (scientificProofBox ? scientificProofBox.textContent.trim() : '');
+    },
+    getMotionCheckVisible: () => scientificProofBox ? (scientificProofBox.style.display !== 'none') : false,
+    getMotionCheckText: () => {
+      const el = document.getElementById('viewer-scientific-proof-text');
+      return el ? el.textContent.trim() : (scientificProofBox ? scientificProofBox.textContent.trim() : '');
+    },
+    getVignetteEnabled: () => state.vignetteEnabled,
+    toggleVignette: () => {
+      btnToggleVignette?.click();
+      return state.vignetteEnabled;
+    },
+    saveImage: () => {
+      btnSaveImage?.click();
+      return displayCanvas ? displayCanvas.toDataURL('image/png') : null;
+    },
+    getArtifactWarningVisible: () => {
+      const el = document.getElementById('viewer-artifact-warning');
+      return el ? el.style.display !== 'none' : false;
+    },
+    getArtifactWarningText: () => {
+      const el = document.getElementById('viewer-artifact-warning');
+      return el ? el.textContent.trim() : '';
     },
     isWaitingForData: () => viewerControlCard?.classList.contains('is-waiting') || false,
     setZoom: (z) => setZoom(z),
